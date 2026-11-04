@@ -211,6 +211,26 @@ a {{ color: {ACCENT}; }}
   .st-key-dd_season_bar button p {{ font-size: .74rem !important; }}
   .st-key-dd_season_bar [data-testid="stButtonGroup"] button {{ padding: .25rem .3rem; }}
 }}
+/* ---- phone navigation: page chips, always visible (hidden on desktop, where the top menu shows) ---- */
+.st-key-dd_mobile_nav {{ display: none !important; }}
+@media (max-width: 768px) {{
+  .st-key-dd_mobile_nav {{ display: flex !important; flex-direction: row !important; flex-wrap: nowrap !important;
+                           gap: .4rem !important; overflow-x: auto; margin: -.3rem 0 .9rem 0;
+                           padding-bottom: .3rem; scrollbar-width: none; -webkit-overflow-scrolling: touch; }}
+  .st-key-dd_mobile_nav::-webkit-scrollbar {{ display: none; }}
+  .st-key-dd_mobile_nav > div {{ flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; }}
+  .st-key-dd_mobile_nav [data-testid="stPageLink-NavLink"] {{ background: {SURFACE}; border: 1px solid {BORDER};
+        border-radius: 999px; padding: .3rem .85rem; min-height: 2.1rem; white-space: nowrap; }}
+  .st-key-dd_mobile_nav [data-testid="stPageLink-NavLink"] p {{ color: {INK}; font-size: .86rem; white-space: nowrap; }}
+  /* the side menu behind the ">>" button is replaced by the chips above */
+  [data-testid="stExpandSidebarButton"], [data-testid="stSidebarCollapsedControl"],
+  [data-testid="stSidebar"], [data-testid="stSidebarCollapseButton"] {{ display: none !important; }}
+  /* Streamlit's box around a chart is a few px shorter than the chart and scrolls (overflow auto): a finger
+     swipe on a chart then scrolled that tiny box, not the page. clip shows the same and never scrolls. */
+  [data-testid="stElementContainer"]:has([data-testid="stPlotlyChart"]) {{ overflow-y: clip !important; }}
+}}
+/* a finger on a chart scrolls the page (no zoom box) */
+[data-testid="stPlotlyChart"] .draglayer, [data-testid="stPlotlyChart"] .draglayer * {{ touch-action: pan-y !important; }}
 </style>
 """
 
@@ -290,6 +310,23 @@ def header():
     link_set(seasons=want or None)
     st.session_state._seasons_url = want
     return lo, hi
+
+
+def mobile_nav(pages, current=None):
+    """Phone navigation: one row of page chips under the header, always visible. Streamlit's own top menu
+    folds into a hidden side menu on phones; CSS shows this row only on screens up to 768 px wide, so the
+    desktop page is exactly as before. `current` is the page st.navigation returned: its chip is drawn in
+    the accent. st.page_link has no key and no "current page" mark, so a one-rule <style> picks the chip
+    by position (st.html with only a <style> takes no space on the page)."""
+    i = next((n for n, p in enumerate(pages, 1) if current is not None and p.url_path == current.url_path), 0)
+    if i:
+        chip = f'.st-key-dd_mobile_nav > div:nth-child({i}) [data-testid="stPageLink-NavLink"]'
+        st.html(f'<style>{chip} {{ border-color: {ACCENT} !important; }}'
+                f' {chip} p {{ color: {ACCENT} !important; font-weight: 600; }}</style>')
+    with st.container(key="dd_mobile_nav"):
+        for p in pages:
+            st.page_link(p, label=p.title)
+
 
 
 SEASON_PRESETS = {"All seasons": (SEASONS[0], SEASONS[-1]), "Last 3": (SEASONS[-3], SEASONS[-1]),
@@ -1200,8 +1237,13 @@ def layout(fig, height=320, xtitle=None, ytitle=None, legend=False, credit=None)
 
 
 def show(fig, key):
-    st.plotly_chart(fig, config={"displayModeBar": False, "scrollZoom": False}, key=key, width="stretch",
-                    theme=None)
+    # No zoom or pan by touch or mouse: on a phone a finger dragging over a chart drew a zoom box and
+    # zoomed in far (tester video, 2026-11-04). Hover and tap labels still work.
+    fig.update_layout(dragmode=False)
+    fig.update_xaxes(fixedrange=True)
+    fig.update_yaxes(fixedrange=True)
+    st.plotly_chart(fig, config={"displayModeBar": False, "scrollZoom": False, "doubleClick": False,
+                                 "showAxisDragHandles": False}, key=key, width="stretch", theme=None)
 
 
 def polarity_bars(x, y, hover, ytitle, key, height=300, credit=None):

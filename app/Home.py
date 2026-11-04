@@ -3,8 +3,8 @@ Home.py - Dugout Data: entry point and page router (main file for Streamlit Clou
 READ-ONLY: the pages read psl.sqlite only (Insights reads its aggregate file); data_files.py
 finds them locally or, on Streamlit Cloud, downloads them once per server.
 
-Sets the page config and CSS, draws the same header on every page (brand, tagline, season
-filter), then runs the chosen page from views/. Design rules: docs/STYLE.md.
+Sets the page config and CSS, draws the same header on every page (brand, season
+control), then runs the chosen page from views/. Design rules: docs/STYLE.md.
 The Insights (beta) page exists only when common.SHOW_INSIGHTS is True and its file is
 available: otherwise it is not in the menu, has no URL and no data file is opened for it.
 
@@ -49,4 +49,5 @@ pages.append(st.Page("views/method.py", title="Method", url_path="method"))
 
 nav = st.navigation(pages, position="top")
 c.header()
+c.mobile_nav(pages, current=nav)
 nav.run()
