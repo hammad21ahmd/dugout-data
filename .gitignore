@@ -1,0 +1,10 @@
+# Never commit secrets or data files.
+.streamlit/secrets.toml
+*.sqlite
+*.sqlite-*
+*.db
+*.csv
+*.xlsx
+__pycache__/
+*.pyc
+.venv/
