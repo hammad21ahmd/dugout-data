@@ -12,7 +12,7 @@ Analysis by Hammad.
   Commons Attribution License (ODC-BY). Innings 1 and 2 only; super overs are left out.
 - **Batting and bowling styles: Wikipedia and DBpedia** (CC BY-SA), with the source shown on
   each player page.
-- **Insights (beta) page only: Data: ESPNcricinfo ball-by-ball.** Line, length and scoring-zone
+- **Insights page only: Data: ESPNcricinfo ball-by-ball.** Line, length and scoring-zone
   figures on that page are totals per player and season from ESPNcricinfo ball-by-ball records.
   They are not Dugout Data's own data and appear nowhere else in the app.
 

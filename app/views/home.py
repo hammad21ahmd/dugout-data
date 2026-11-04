@@ -28,6 +28,7 @@ NUM = {"Mat": c.col_int(help="Matches played"), "Inns": c.col_int(help="Innings 
        "Runs": c.col_int(), "Balls": c.col_int(help="Balls faced, wides not counted"),
        "HS": st.column_config.TextColumn("HS", help="Highest score; * = not out", width="small", alignment="right"),
        "Avg": c.col_1(help=c.HELP["Avg"]), "SR": c.col_1(help=c.HELP["SR"]), "50s": c.col_int(), "100s": c.col_int(),
+       "4s": c.col_int(help="Fours"), "6s": c.col_int(help="Sixes"),
        "Overs": c.col_1(help="Overs bowled (3.2 = 3 overs 2 balls)"), "Wkts": c.col_int(help="Bowler wickets"),
        "Best": st.column_config.TextColumn("Best", help="Best bowling in an innings: wickets/runs", width="small",
                                            alignment="right"),
@@ -78,8 +79,8 @@ tabs = st.tabs(["Most runs", "Most wickets", "Most catches", "Best economy", "Be
 with tabs[0]:
     t = ranked(bat.sort_values(["runs", "balls"], ascending=[False, True]), 10)
     t = t.rename(columns={"mat": "Mat", "inns": "Inns", "runs": "Runs", "hs": "HS", "avg": "Avg", "sr": "SR",
-                          "fifties": "50s", "hundreds": "100s"})
-    c.table(t[["#", "Player", "Mat", "Inns", "Runs", "HS", "Avg", "SR", "50s", "100s"]], column_config=NUM)
+                          "fifties": "50s", "hundreds": "100s", "fours": "4s", "sixes": "6s"})
+    c.table(t[["#", "Player", "Mat", "Inns", "Runs", "HS", "Avg", "SR", "50s", "100s", "4s", "6s"]], column_config=NUM)
     c.note("Average counts every dismissal, including run-outs at the non-striker's end.")
 with tabs[1]:
     t = ranked(bowl.sort_values(["wkts", "conceded"], ascending=[False, True]), 10)

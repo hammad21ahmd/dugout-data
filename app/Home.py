@@ -5,7 +5,7 @@ finds them locally or, on Streamlit Cloud, downloads them once per server.
 
 Sets the page config and CSS, draws the same header on every page (brand, season
 control), then runs the chosen page from views/. Design rules: docs/STYLE.md.
-The Insights (beta) page exists only when common.SHOW_INSIGHTS is True and its file is
+The Insights page exists only when common.SHOW_INSIGHTS is True and its file is
 available: otherwise it is not in the menu, has no URL and no data file is opened for it.
 
 Run locally from the project folder (so .streamlit/config.toml is read):
@@ -13,14 +13,23 @@ Run locally from the project folder (so .streamlit/config.toml is read):
 """
 
 import os
+import sys
 from pathlib import Path
 
 import streamlit as st
 
-import common as c
-import data_files
-
 st.set_page_config(page_title="Dugout Data", layout="wide", initial_sidebar_state="collapsed")
+# On a fresh server the first visitor waited about 3 s on a blank screen while pandas and common.py load
+# (measured 2026-11-05, tools/measure_first_load.py). A plain line shows at once instead; later runs
+# have common.py loaded already and skip it, so clicks never flash it.
+loading = None
+if "common" not in sys.modules:
+    loading = st.empty()
+    loading.markdown("Loading Dugout Data...")
+
+import common as c  # noqa: E402  (heavy: pandas, numpy; after the loading line on purpose)
+import data_files  # noqa: E402
+
 if st.get_option("theme.base") != "dark":
     # .streamlit/config.toml was not loaded (Streamlit reads it from the folder it starts in).
     print("Dugout Data: dark theme not loaded. Start Streamlit from the project folder.")
@@ -29,6 +38,8 @@ st.markdown(c.CSS, unsafe_allow_html=True)
 if not os.environ.get("DD_DB"):
     psl, insights, problem = data_files.paths()
     if problem:
+        if loading is not None:
+            loading.empty()
         st.markdown('<div class="dd-brand"><b>Dugout Data</b></div>', unsafe_allow_html=True)
         c.empty(problem)
         st.stop()
@@ -44,10 +55,12 @@ pages = [
     st.Page("views/venues.py", title="Venues", url_path="venues"),
 ]
 if c.SHOW_INSIGHTS and c.insights_available():
-    pages.append(st.Page("views/insights.py", title="Insights (beta)", url_path="insights"))
+    pages.append(st.Page("views/insights.py", title="Insights", url_path="insights"))
 pages.append(st.Page("views/method.py", title="Method", url_path="method"))
 
 nav = st.navigation(pages, position="top")
+if loading is not None:
+    loading.empty()
 c.header()
 c.mobile_nav(pages, current=nav)
 nav.run()

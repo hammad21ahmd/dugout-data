@@ -112,7 +112,7 @@ st.markdown("""
 """)
 
 if c.SHOW_INSIGHTS:
-    c.section("Insights (beta)")
+    c.section("Insights")
     st.markdown("Line and length numbers on the Insights page are added up from ESPNcricinfo "
                 "ball-by-ball records, joined to Cricsheet ball by ball (only balls whose runs and "
                 "wickets agree are used). That data is not Dugout Data's own. "

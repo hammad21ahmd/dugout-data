@@ -32,7 +32,7 @@ import data_files  # noqa: E402
 # replaces DB and INSIGHTS_DB with the downloaded files (data_files.paths()).
 DB = Path(os.environ.get("DD_DB") or data_files.LOCAL_PSL)
 
-# ---- Insights (beta): one switch. False removes the page completely (menu, URL, data).
+# ---- Insights: one switch. False removes the page completely (menu, URL, data).
 SHOW_INSIGHTS = True
 # Aggregates only (never ball by ball); never committed to Git. See data_files.py.
 INSIGHTS_DB = data_files.LOCAL_INSIGHTS
@@ -200,6 +200,10 @@ a {{ color: {ACCENT}; }}
   .st-key-dd_season_bar button p {{ font-size: .8rem !important; white-space: nowrap; }}
   .st-key-dd_season_bar [data-testid="stPopover"] button {{ padding: .25rem .3rem; min-height: 2.1rem; }}
   .dd-seasons {{ font-size: .74rem; padding: .1rem .35rem; }}
+  /* three presets, then one compact button showing the range that opens the Custom slider */
+  .st-key-dd_season_bar > div:has([data-testid="stPopover"]):not(.st-key-dd_season_phone),
+  .st-key-dd_season_bar > div:has(.dd-seasons) {{ display: none !important; }}
+  .st-key-dd_season_bar > .st-key-dd_season_phone {{ display: block !important; flex: 0 0 auto !important; }}
   /* tabs: all fit on one line */
   .stTabs [role="tablist"] {{ gap: 0; }}
   .stTabs [role="tab"] {{ padding: .4rem .3rem; }}
@@ -212,16 +216,22 @@ a {{ color: {ACCENT}; }}
   .st-key-dd_season_bar [data-testid="stButtonGroup"] button {{ padding: .25rem .3rem; }}
 }}
 /* ---- phone navigation: page chips, always visible (hidden on desktop, where the top menu shows) ---- */
-.st-key-dd_mobile_nav {{ display: none !important; }}
+/* Streamlit wraps the chip row in a layout box: hidden too, or the empty box adds a 16 px gap on desktop */
+.st-key-dd_mobile_nav, .st-key-dd_season_phone,
+[data-testid="stLayoutWrapper"]:has(> .st-key-dd_mobile_nav) {{ display: none !important; }}
 @media (max-width: 768px) {{
-  .st-key-dd_mobile_nav {{ display: flex !important; flex-direction: row !important; flex-wrap: nowrap !important;
-                           gap: .4rem !important; overflow-x: auto; margin: -.3rem 0 .9rem 0;
-                           padding-bottom: .3rem; scrollbar-width: none; -webkit-overflow-scrolling: touch; }}
-  .st-key-dd_mobile_nav::-webkit-scrollbar {{ display: none; }}
-  .st-key-dd_mobile_nav > div {{ flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; }}
+  [data-testid="stLayoutWrapper"]:has(> .st-key-dd_mobile_nav) {{ display: block !important; }}
+  /* all eight chips at once: two rows of four, nothing cut or hidden off screen */
+  .st-key-dd_mobile_nav {{ display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr));
+                           gap: .4rem !important; margin: 0 0 1rem 0; padding: 2px 0; overflow: visible; }}
+  .st-key-dd_mobile_nav > div {{ width: auto !important; min-width: 0 !important; margin: 0 !important; }}
+  .st-key-dd_mobile_nav > div:has(style) {{ display: none !important; }}
+  .st-key-dd_mobile_nav [data-testid="stPageLink"] {{ width: 100%; }}
   .st-key-dd_mobile_nav [data-testid="stPageLink-NavLink"] {{ background: {SURFACE}; border: 1px solid {BORDER};
-        border-radius: 999px; padding: .3rem .85rem; min-height: 2.1rem; white-space: nowrap; }}
-  .st-key-dd_mobile_nav [data-testid="stPageLink-NavLink"] p {{ color: {INK}; font-size: .86rem; white-space: nowrap; }}
+        border-radius: 999px; padding: .3rem .25rem; min-height: 2.1rem; white-space: nowrap; width: 100%;
+        justify-content: center; margin: 0; }}
+  .st-key-dd_mobile_nav [data-testid="stPageLink-NavLink"] p {{ color: {INK}; font-size: .84rem; white-space: nowrap; }}
+  .dd-rule {{ margin: .2rem 0 .2rem 0 !important; }}
   /* the side menu behind the ">>" button is replaced by the chips above */
   [data-testid="stExpandSidebarButton"], [data-testid="stSidebarCollapsedControl"],
   [data-testid="stSidebar"], [data-testid="stSidebarCollapseButton"] {{ display: none !important; }}
@@ -304,7 +314,16 @@ def header():
                              key=slider_key, on_change=keep, args=(slider_key,),
                              help="Choose the first and last season.")
         lo, hi = st.session_state.season_range
-        st.markdown(f'<span class="dd-seasons">{lo if lo == hi else f"{lo}-{hi}"}</span>', unsafe_allow_html=True)
+        rng_txt = str(lo) if lo == hi else f"{lo}-{hi}"
+        st.markdown(f'<span class="dd-seasons">{rng_txt}</span>', unsafe_allow_html=True)
+        # Phone only (CSS): Custom and the range label become one compact button that shows the range and
+        # opens the same slider. Hidden on desktop, where Custom and the label above show as before.
+        phone_key = f"_season_widget_m_{st.session_state._slider_gen}"
+        with st.popover(rng_txt, type="tertiary" if preset_for(st.session_state.season_range) else "primary",
+                        key="dd_season_phone"):
+            st.select_slider("Seasons", options=SEASONS, value=tuple(st.session_state.season_range),
+                             key=phone_key, on_change=keep, args=(phone_key,),
+                             help="Choose the first and last season.")
     st.markdown('<hr class="dd-rule">', unsafe_allow_html=True)
     want = f"{lo}-{hi}" if (lo, hi) != (SEASONS[0], SEASONS[-1]) else ""
     link_set(seasons=want or None)
@@ -319,13 +338,15 @@ def mobile_nav(pages, current=None):
     the accent. st.page_link has no key and no "current page" mark, so a one-rule <style> picks the chip
     by position (st.html with only a <style> takes no space on the page)."""
     i = next((n for n, p in enumerate(pages, 1) if current is not None and p.url_path == current.url_path), 0)
-    if i:
-        chip = f'.st-key-dd_mobile_nav > div:nth-child({i}) [data-testid="stPageLink-NavLink"]'
-        st.html(f'<style>{chip} {{ border-color: {ACCENT} !important; }}'
-                f' {chip} p {{ color: {ACCENT} !important; font-weight: 600; }}</style>')
     with st.container(key="dd_mobile_nav"):
         for p in pages:
             st.page_link(p, label=p.title)
+        if i:
+            # Inside the chip row (last, hidden), so on desktop it adds no gap: the page starts where it did
+            # before the phone chips existed (a style block outside the row pushed desktop 16 px down).
+            chip = f'.st-key-dd_mobile_nav > div:nth-child({i}) [data-testid="stPageLink-NavLink"]'
+            st.html(f'<style>{chip} {{ border-color: {ACCENT} !important; }}'
+                    f' {chip} p {{ color: {ACCENT} !important; font-weight: 600; }}</style>')
 
 
 
@@ -861,8 +882,24 @@ def record_tables(lo, hi):
             for name in ("rec_bat", "rec_bowl", "rec_catch"):
                 df = query(f"SELECT * FROM {name} WHERE lo = ? AND hi = ?", (lo, hi))
                 out.append(df.drop(columns=["lo", "hi"]).set_index("pid"))
+            if "fours" not in out[0]:
+                # an export made before 4s and 6s were precomputed: add them (one quick count, no data change)
+                out[0] = _with_boundaries(out[0], lo, hi)
             return (*out, int(info["unresolved"].iloc[0]))
     return compute_record_tables(lo, hi)
+
+
+def _with_boundaries(bat, lo, hi):
+    """Adds fours and sixes per batter: balls faced (wides excluded) with 4 or 6 runs off the bat,
+    innings 1 and 2 only (no super overs), the chosen seasons."""
+    b = query(f"""SELECT d.batter_id pid,
+                         SUM(d.batsman_runs = 4 AND d.extras_type NOT LIKE '%wides%') fours,
+                         SUM(d.batsman_runs = 6 AND d.extras_type NOT LIKE '%wides%') sixes
+                  {_REC_BASE} GROUP BY 1""", (lo, hi)).set_index("pid")
+    bat = bat.copy()
+    for col in ("fours", "sixes"):
+        bat[col] = bat.index.map(b[col]).fillna(0).astype(int)
+    return bat
 
 
 def compute_record_tables(lo, hi):
@@ -894,6 +931,7 @@ def compute_record_tables(lo, hi):
     bat["avg"] = div(bat["runs"], bat["outs"])
     bat["sr"] = div(bat["runs"], bat["balls"], 100)
     bat["mat"] = bat.index.map(mat).fillna(0).astype(int)
+    bat = _with_boundaries(bat, lo, hi)
     # bowling: one row per bowler and innings
     bi = query(f"""SELECT d.match_id, d.inning, d.bowler_id pid,
                           SUM(d.extras_type NOT LIKE '%wides%' AND d.extras_type NOT LIKE '%noballs%') legal,

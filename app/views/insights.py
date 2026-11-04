@@ -1,5 +1,5 @@
 """
-insights.py - Insights (beta): line and length, scoring zones and bowler variations for PSL 2018
+insights.py - Insights: line and length, scoring zones and bowler variations for PSL 2018
 and 2020 to 2026.
 READ-ONLY. Reads only the private aggregate file (tools/build_insights.py): totals per
 player, season, role, line or length. No ball-level rows exist in it or on this page.
@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # app/ folder,
 
 import common as c  # noqa: E402
 
-c.page("Insights (beta)", "Where bowlers pitch it, where batters score, and how each length goes.")
+c.page("Insights", "Where bowlers pitch it, where batters score, and how each length goes.")
 st.markdown(f'<span class="dd-chip"><b>{c.INSIGHTS_CREDIT}</b></span>', unsafe_allow_html=True)
 c.note("The line, length and shot data on this page come from ESPNcricinfo ball-by-ball records. "
        "They are not Dugout Data's own data; Dugout Data only adds them up per player and season.")
