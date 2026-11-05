@@ -52,13 +52,15 @@ TEAM_CODES = {"Karachi Kings": "KK", "Lahore Qalandars": "LQ", "Islamabad United
               "Quetta Gladiators": "QG", "Multan Sultans": "MS", "Hyderabad Kingsmen": "HK", "Rawalpindiz": "RP"}
 TEAM_LEGEND = ", ".join(f"{v} {k}" for k, v in TEAM_CODES.items())
 
-# ---- Colours (docs/STYLE.md): dark by default. UI: one accent. Charts: validated dark data palette.
-ACCENT = "#4f94e5"            # the one accent: UI, sliders, tabs, card rules, chart highlight
-PAGE_BG, SURFACE, SURFACE_2, BORDER = "#111212", "#1a1a19", "#222220", "#2f2f2c"
-INK, MUTED, FAINT = "#f0efec", "#c3c2b7", "#9a998f"
-GRID = "#2c2c29"
-SERIES = [ACCENT, "#d95926", "#199e70"]             # accent blue, orange, aqua (fixed order, dark steps)
-POS, NEG = ACCENT, "#e66767"                        # diverging poles: above / below average
+# ---- Colours (docs/STYLE.md): light theme, blue and white. UI: one accent. Charts: fixed data palette.
+ACCENT = "#1565C0"            # the one UI accent: links, active tab and chip, sliders, card rules
+PAGE_BG, SURFACE, SURFACE_2, BORDER = "#FFFFFF", "#F3F6FB", "#E8EEF7", "#D9E2EF"
+INK, MUTED, FAINT = "#0F1B2D", "#5B6B82", "#5B6B82"
+HEADER_BG, HEADER_INK = "#0B3D91", "#FFFFFF"        # top navigation strip
+CHART_BG, GRID, ZERO, MARK = "#FFFFFF", "#E3E9F2", "#9AA8BC", "#8593A8"   # chart ground, grid, zero line, watermark
+BAT, BOWL = "#1F6FD0", "#DD6C26"                    # batting blue, bowling orange (both at least 3:1 on white)
+SERIES = [BAT, BOWL, "#18A06B"]                     # batting, bowling, third series (fixed order)
+POS, NEG = "#18A06B", "#D64545"                     # diverging poles: above / below average
 
 # ---- One help line per metric (docs/STYLE.md section 8).
 HELP = {
@@ -85,23 +87,28 @@ CSS = f"""
 [data-testid="stDataFrame"] [data-testid="stElementToolbar"] {{ display: none !important; }}
 
 .stApp {{ background: {PAGE_BG}; color: {INK}; font-variant-numeric: tabular-nums; }}
-[data-testid="stHeader"] {{ background: {PAGE_BG}; border-bottom: 1px solid {BORDER}; }}
+[data-testid="stHeader"] {{ background: {HEADER_BG}; color: {HEADER_INK}; border-bottom: 1px solid {HEADER_BG}; }}
+[data-testid="stHeader"] [data-testid="stStatusWidget"], [data-testid="stHeader"] [data-testid="stStatusWidget"] * {{
+    color: {HEADER_INK} !important; }}
 .block-container {{ max-width: 1120px; padding: 4.25rem 1.5rem 3rem 1.5rem !important; }}
 h1, h2, h3 {{ color: {INK}; letter-spacing: -0.01em; }}
 a {{ color: {ACCENT}; }}
 
-/* ---- top navigation: light text, subtle hover, clear active page (works even without config.toml) ---- */
+/* ---- top navigation: white text on the deep blue strip, subtle hover, clear active page
+   (works even without config.toml) ---- */
 [data-testid="stTopNav"] {{ gap: .15rem; }}
-[data-testid="stTopNavLink"], [data-testid="stSidebarNavLink"] {{ color: {INK} !important; background: transparent !important;
+[data-testid="stTopNavLink"] {{ color: {HEADER_INK} !important; background: transparent !important;
     border-radius: 8px; border-bottom: 2px solid transparent; }}
-[data-testid="stTopNavLink"] *, [data-testid="stSidebarNavLink"] * {{ color: {INK} !important; }}
-[data-testid="stTopNavLink"]:hover, [data-testid="stSidebarNavLink"]:hover {{ background: {SURFACE_2} !important; }}
-[data-testid="stTopNavLink"][aria-current="page"], [data-testid="stSidebarNavLink"][aria-current="page"] {{
-    background: {SURFACE_2} !important; border-bottom-color: {ACCENT}; }}
-[data-testid="stTopNavLink"][aria-current="page"] *, [data-testid="stSidebarNavLink"][aria-current="page"] * {{
-    color: {ACCENT} !important; font-weight: 700; }}
+[data-testid="stTopNavLink"] * {{ color: {HEADER_INK} !important; }}
+[data-testid="stTopNavLink"]:hover {{ background: rgba(255, 255, 255, 0.12) !important; }}
+[data-testid="stTopNavLink"][aria-current="page"] {{ background: rgba(255, 255, 255, 0.16) !important;
+    border-bottom-color: {HEADER_INK}; }}
+[data-testid="stTopNavLink"][aria-current="page"] * {{ color: {HEADER_INK} !important; font-weight: 700; }}
+[data-testid="stSidebarNavLink"] {{ color: {INK} !important; background: transparent !important; border-radius: 8px; }}
+[data-testid="stSidebarNavLink"] * {{ color: {INK} !important; }}
+[data-testid="stSidebarNavLink"][aria-current="page"] * {{ color: {ACCENT} !important; font-weight: 700; }}
 
-/* ---- widget labels and tabs: readable on dark (WCAG AA) ---- */
+/* ---- widget labels and tabs: readable (WCAG AA) ---- */
 [data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] * {{ color: {INK} !important; }}
 [data-testid="stTab"] p, [data-testid="stTab"] {{ color: {MUTED} !important; }}
 [data-testid="stTab"][aria-selected="true"] p, [data-testid="stTab"][aria-selected="true"] {{ color: {ACCENT} !important; }}
@@ -132,16 +139,16 @@ a {{ color: {ACCENT}; }}
 .dd-card {{ background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 10px; padding: .85rem 1rem; min-width: 0; }}
 .dd-card.lead {{ border-top: 3px solid {ACCENT}; }}
 .dd-card-label {{ color: {MUTED}; font-size: .74rem; text-transform: uppercase; letter-spacing: .04em; font-weight: 600;
-                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+                  overflow-wrap: anywhere; }}
 .dd-card-value {{ color: {INK}; font-size: 1.65rem; font-weight: 700; line-height: 1.2; margin-top: .15rem;
                   font-variant-numeric: tabular-nums; white-space: nowrap; }}
-/* A name or phrase in a card never wraps: one line, smaller type, ellipsis as a last resort. */
-.dd-card-value.text {{ font-size: 1.12rem; line-height: 1.55; overflow: hidden; text-overflow: ellipsis; }}
+/* A name or phrase in a card: smaller type; it wraps onto more lines rather than being cut (no ellipsis). */
+.dd-card-value.text {{ font-size: 1.12rem; line-height: 1.35; white-space: normal; overflow-wrap: break-word; }}
 .dd-card-help {{ color: {FAINT}; font-size: .78rem; line-height: 1.35; margin-top: .2rem; }}
-.dd-card-detail {{ color: {MUTED}; font-size: .8rem; margin-top: .15rem; white-space: nowrap; overflow: hidden;
-                   text-overflow: ellipsis; font-variant-numeric: tabular-nums; }}
-.dd-card-sub {{ color: {ACCENT}; font-size: .9rem; font-weight: 700; margin-top: .1rem; white-space: nowrap;
-                font-variant-numeric: tabular-nums; }}
+.dd-card-detail {{ color: {MUTED}; font-size: .8rem; margin-top: .15rem; overflow-wrap: break-word;
+                   font-variant-numeric: tabular-nums; }}
+.dd-card-sub {{ color: {ACCENT}; font-size: .9rem; font-weight: 700; margin-top: .15rem; line-height: 1.3;
+                overflow-wrap: break-word; font-variant-numeric: tabular-nums; }}
 
 /* ---- text blocks ---- */
 .dd-note {{ color: {FAINT}; font-size: .82rem; margin: .35rem 0 .9rem 0; }}
@@ -172,7 +179,8 @@ a {{ color: {ACCENT}; }}
 [data-testid="stDataFrame"] {{ border: 1px solid {BORDER}; border-radius: 10px; overflow: hidden; background: {SURFACE}; }}
 .stTabs [data-baseweb="tab-list"] {{ gap: .25rem; overflow-x: auto; }}
 .stTabs [data-baseweb="tab"] {{ padding: .4rem .7rem; }}
-[data-testid="stPlotlyChart"] {{ background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 10px; padding: .4rem; }}
+[data-testid="stPlotlyChart"] {{ background: {CHART_BG}; border: 1px solid {BORDER}; border-radius: 10px; padding: 0;
+                                 box-sizing: border-box; }}
 
 /* ---- footer ---- */
 .dd-footer {{ color: {MUTED}; font-size: .85rem; border-top: 1px solid {BORDER}; margin-top: 3rem; padding-top: .9rem; }}
@@ -187,23 +195,9 @@ a {{ color: {ACCENT}; }}
   .dd-cards {{ grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; }}
   .dd-card {{ padding: .7rem .75rem; }}
   .dd-card-value {{ font-size: 1.35rem; }}
-  .dd-card-value.text {{ font-size: .98rem; line-height: 1.75; }}
+  .dd-card-value.text {{ font-size: .98rem; line-height: 1.35; }}
   .dd-section {{ margin-top: 1.6rem; }}
   .dd-compare th, .dd-compare td {{ padding: .45rem .5rem; font-size: .85rem; }}
-  /* season bar: one full-width row from the left edge, range label beside the buttons */
-  .st-key-dd_season_bar {{ justify-content: flex-start !important; flex-wrap: nowrap !important;
-                           gap: .3rem !important; width: 100% !important; }}
-  .st-key-dd_season_bar > div:first-child {{ flex: 1 1 auto !important; min-width: 0; }}
-  .st-key-dd_season_bar [data-testid="stButtonGroup"] > div {{ width: 100%; flex-wrap: nowrap !important; }}
-  .st-key-dd_season_bar [data-testid="stButtonGroup"] button {{ flex: 1 1 auto; padding: .25rem .45rem;
-                                                                min-height: 2.1rem; }}
-  .st-key-dd_season_bar button p {{ font-size: .8rem !important; white-space: nowrap; }}
-  .st-key-dd_season_bar [data-testid="stPopover"] button {{ padding: .25rem .3rem; min-height: 2.1rem; }}
-  .dd-seasons {{ font-size: .74rem; padding: .1rem .35rem; }}
-  /* three presets, then one compact button showing the range that opens the Custom slider */
-  .st-key-dd_season_bar > div:has([data-testid="stPopover"]):not(.st-key-dd_season_phone),
-  .st-key-dd_season_bar > div:has(.dd-seasons) {{ display: none !important; }}
-  .st-key-dd_season_bar > .st-key-dd_season_phone {{ display: block !important; flex: 0 0 auto !important; }}
   /* tabs: all fit on one line */
   .stTabs [role="tablist"] {{ gap: 0; }}
   .stTabs [role="tab"] {{ padding: .4rem .3rem; }}
@@ -212,14 +206,16 @@ a {{ color: {ACCENT}; }}
 @media (max-width: 380px) {{
   .stTabs [role="tab"] {{ padding: .4rem .2rem; }}
   .stTabs [role="tab"] p {{ font-size: .78rem; }}
-  .st-key-dd_season_bar button p {{ font-size: .74rem !important; }}
-  .st-key-dd_season_bar [data-testid="stButtonGroup"] button {{ padding: .25rem .3rem; }}
 }}
 /* ---- phone navigation: page chips, always visible (hidden on desktop, where the top menu shows) ---- */
 /* Streamlit wraps the chip row in a layout box: hidden too, or the empty box adds a 16 px gap on desktop */
 .st-key-dd_mobile_nav, .st-key-dd_season_phone,
 [data-testid="stLayoutWrapper"]:has(> .st-key-dd_mobile_nav) {{ display: none !important; }}
 @media (max-width: 768px) {{
+  /* phone: the empty blue strip (the top menu is folded away here) becomes a thin 6 px band; the page
+     starts just below it */
+  [data-testid="stHeader"] {{ height: 6px !important; min-height: 0 !important; overflow: hidden; }}
+  .block-container {{ padding-top: 1.25rem !important; }}
   [data-testid="stLayoutWrapper"]:has(> .st-key-dd_mobile_nav) {{ display: block !important; }}
   /* all eight chips at once: two rows of four, nothing cut or hidden off screen */
   .st-key-dd_mobile_nav {{ display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -232,6 +228,16 @@ a {{ color: {ACCENT}; }}
         justify-content: center; margin: 0; }}
   .st-key-dd_mobile_nav [data-testid="stPageLink-NavLink"] p {{ color: {INK}; font-size: .84rem; white-space: nowrap; }}
   .dd-rule {{ margin: .2rem 0 .2rem 0 !important; }}
+  /* seasons: one dropdown (presets and Custom range inside) showing only the current choice; the desktop
+     preset buttons, Custom button and range label are hidden */
+  [data-testid="stHorizontalBlock"]:has(.st-key-dd_season_bar) {{ flex-wrap: nowrap !important; gap: .5rem !important; }}
+  [data-testid="stHorizontalBlock"]:has(.st-key-dd_season_bar) > [data-testid="stColumn"] {{
+      width: auto !important; flex: 1 1 auto !important; min-width: 0 !important; }}
+  .st-key-dd_season_bar {{ justify-content: flex-end !important; flex-wrap: nowrap !important; }}
+  .st-key-dd_season_bar > div:not(.st-key-dd_season_phone) {{ display: none !important; }}
+  .st-key-dd_season_bar > .st-key-dd_season_phone {{ display: block !important; flex: 0 0 auto !important; }}
+  .st-key-dd_season_phone button {{ min-height: 2.1rem; padding: .25rem .7rem; }}
+  .st-key-dd_season_phone button p {{ font-size: .88rem !important; font-weight: 600; white-space: nowrap; }}
   /* the side menu behind the ">>" button is replaced by the chips above */
   [data-testid="stExpandSidebarButton"], [data-testid="stSidebarCollapsedControl"],
   [data-testid="stSidebar"], [data-testid="stSidebarCollapseButton"] {{ display: none !important; }}
@@ -287,6 +293,7 @@ def header():
             rng = (int(m.group(1)), int(m.group(2)))
         st.session_state.season_range = rng
         st.session_state._slider_gen += 1
+        st.session_state._season_custom_m = False
 
     def keep(key):
         st.session_state.season_range = tuple(st.session_state[key])
@@ -296,6 +303,7 @@ def header():
         if choice in SEASON_PRESETS:
             st.session_state.season_range = SEASON_PRESETS[choice]
             st.session_state._slider_gen += 1
+            st.session_state._season_custom_m = False
 
     # The highlighted preset follows the range (from a link, the slider or a preset). The Custom slider
     # gets a new key whenever the range changes outside it (preset or link), so it always opens on the
@@ -316,14 +324,30 @@ def header():
         lo, hi = st.session_state.season_range
         rng_txt = str(lo) if lo == hi else f"{lo}-{hi}"
         st.markdown(f'<span class="dd-seasons">{rng_txt}</span>', unsafe_allow_html=True)
-        # Phone only (CSS): Custom and the range label become one compact button that shows the range and
-        # opens the same slider. Hidden on desktop, where Custom and the label above show as before.
+        # Phone only (CSS, 768 px or less): the whole control is one dropdown showing only the current choice
+        # ("All seasons", "Last 3", "2026" or the custom range). Inside: the presets and "Custom range" with
+        # the same slider. Hidden on desktop, where the preset buttons, Custom and the label show as before.
+        now = preset_for(st.session_state.season_range)
+        if now:
+            st.session_state._season_choice_m = PHONE_CUSTOM if st.session_state.get("_season_custom_m") else now
+        else:
+            st.session_state._season_choice_m = PHONE_CUSTOM
+
+        def pick_phone():
+            choice = st.session_state._season_choice_m
+            st.session_state._season_custom_m = choice == PHONE_CUSTOM
+            if choice in SEASON_PRESETS:
+                st.session_state.season_range = SEASON_PRESETS[choice]
+                st.session_state._slider_gen += 1
+
         phone_key = f"_season_widget_m_{st.session_state._slider_gen}"
-        with st.popover(rng_txt, type="tertiary" if preset_for(st.session_state.season_range) else "primary",
-                        key="dd_season_phone"):
-            st.select_slider("Seasons", options=SEASONS, value=tuple(st.session_state.season_range),
-                             key=phone_key, on_change=keep, args=(phone_key,),
-                             help="Choose the first and last season.")
+        with st.popover(now or rng_txt, key="dd_season_phone"):
+            st.radio("Seasons", list(SEASON_PRESETS) + [PHONE_CUSTOM], key="_season_choice_m",
+                     on_change=pick_phone, label_visibility="collapsed")
+            if st.session_state._season_choice_m == PHONE_CUSTOM:
+                st.select_slider("Seasons", options=SEASONS, value=tuple(st.session_state.season_range),
+                                 key=phone_key, on_change=keep, args=(phone_key,),
+                                 help="Choose the first and last season.")
     st.markdown('<hr class="dd-rule">', unsafe_allow_html=True)
     want = f"{lo}-{hi}" if (lo, hi) != (SEASONS[0], SEASONS[-1]) else ""
     link_set(seasons=want or None)
@@ -352,6 +376,7 @@ def mobile_nav(pages, current=None):
 
 SEASON_PRESETS = {"All seasons": (SEASONS[0], SEASONS[-1]), "Last 3": (SEASONS[-3], SEASONS[-1]),
                   str(SEASONS[-1]): (SEASONS[-1], SEASONS[-1])}
+PHONE_CUSTOM = "Custom range"
 
 
 def preset_for(rng):
@@ -1117,17 +1142,17 @@ def strength_sentence(r):
 
 
 def effect_bars(rows, key, height=300):
-    """Strengths (accent, right) and weaknesses (red, left) as one horizontal diverging chart."""
+    """Strengths (green, right) and weaknesses (red, left) as one horizontal diverging chart."""
     rows = rows.sort_values("effect")
     labels = [f"{r.situation}: {r.metric_name}" for r in rows.itertuples()]
     vals = (rows["effect"] * 100).round(1)
     fig = go.Figure(go.Bar(x=vals, y=labels, orientation="h", marker_color=[POS if v >= 0 else NEG for v in vals],
-                           marker_line=dict(color=SURFACE, width=2),
+                           marker_line=dict(color=CHART_BG, width=2),
                            hovertext=[strength_sentence(r._asdict()) + f" Shrunk: {r.effect * 100:+.1f}% v PSL."
                                       for r in rows.itertuples()], hoverinfo="text"))
     lay = layout(fig, height=height, xtitle="Better or worse than the PSL average (%, after shrinkage)")
     lay.update_yaxes(showgrid=False, automargin=True)
-    lay.update_xaxes(showgrid=True, gridcolor=GRID, zeroline=True, zerolinecolor="#5f5e58")
+    lay.update_xaxes(showgrid=True, gridcolor=GRID, zeroline=True, zerolinecolor=ZERO)
     show(lay, key)
 
 
@@ -1180,19 +1205,19 @@ def progression(pid, match_id):
 
 
 def progression_chart(bat, out_ball, bowl, key):
-    """Cumulative runs (accent line) with fours and sixes (orange) and the dismissal (red); and, for
+    """Cumulative runs (batting blue line) with fours and sixes (orange) and the dismissal (red); and, for
     a bowler, cumulative runs conceded with wickets (red)."""
     fig = go.Figure()
     if len(bat):
-        fig.add_scatter(x=bat["n"], y=bat["cum"], mode="lines", name="Runs scored", line=dict(color=ACCENT, width=2),
+        fig.add_scatter(x=bat["n"], y=bat["cum"], mode="lines", name="Runs scored", line=dict(color=BAT, width=2),
                         hovertemplate="Ball %{x}: %{y} runs<extra></extra>")
         bd = bat[bat["four"] | bat["six"]]
         fig.add_scatter(x=bd["n"], y=bd["cum"], mode="markers", name="Four or six",
-                        marker=dict(color=SERIES[1], size=8, line=dict(color=SURFACE, width=2)),
+                        marker=dict(color=SERIES[1], size=8, line=dict(color=CHART_BG, width=2)),
                         hovertemplate="Ball %{x}: boundary, %{y} runs<extra></extra>")
         if len(out_ball):
             fig.add_scatter(x=[bat["n"].max()], y=[bat["cum"].max()], mode="markers", name="Out",
-                            marker=dict(color=NEG, size=11, symbol="x", line=dict(color=SURFACE, width=1)),
+                            marker=dict(color=NEG, size=11, symbol="x", line=dict(color=CHART_BG, width=1)),
                             hovertemplate="Out after %{x} balls, %{y} runs<extra></extra>")
     if len(bowl):
         fig.add_scatter(x=bowl["n"], y=bowl["cum"], mode="lines", name="Runs conceded (bowling)",
@@ -1200,7 +1225,7 @@ def progression_chart(bat, out_ball, bowl, key):
                         hovertemplate="Legal ball %{x}: %{y} runs conceded<extra></extra>")
         wk = bowl[bowl["bowler_wkt"]]
         fig.add_scatter(x=wk["n"], y=wk["cum"], mode="markers", name="Wicket",
-                        marker=dict(color=NEG, size=10, symbol="diamond", line=dict(color=SURFACE, width=1)),
+                        marker=dict(color=NEG, size=10, symbol="diamond", line=dict(color=CHART_BG, width=1)),
                         hovertemplate="Wicket at legal ball %{x}<extra></extra>")
     show(layout(fig, height=320, xtitle="Ball", ytitle="Runs", legend=True), key)
 
@@ -1208,7 +1233,8 @@ def progression_chart(bat, out_ball, bowl, key):
 # ------------------------------------------------------------------ share card (the only download)
 @st.cache_data(show_spinner="Making the share card", max_entries=100)
 def share_card_png(pid, lo, hi):
-    """1080 x 1350 PNG: name, teams, seasons, key numbers, 'Dugout Data' and 'Data: Cricsheet.org'."""
+    """1080 x 1350 PNG (light: white, blue rules): name, teams, seasons, key numbers, 'Dugout Data' and
+    'Data: Cricsheet.org'."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -1219,7 +1245,7 @@ def share_card_png(pid, lo, hi):
     ax.set_axis_off()
     ax.set_xlim(0, 1080)
     ax.set_ylim(1350, 0)
-    ax.add_patch(plt.Rectangle((0, 0), 1080, 14, color=ACCENT))
+    ax.add_patch(plt.Rectangle((0, 0), 1080, 14, color=HEADER_BG))
     ax.text(72, 110, "Dugout Data", color=INK, fontsize=30, fontweight="bold", va="center")
     ax.text(72, 160, TAGLINE, color=MUTED, fontsize=17, va="center")
     nm = name(pid)
@@ -1255,22 +1281,23 @@ def share_card_png(pid, lo, hi):
 
 # ------------------------------------------------------------------ charts
 def layout(fig, height=320, xtitle=None, ytitle=None, legend=False, credit=None):
-    """Common chart look (dark), with the Dugout Data watermark (and an optional data credit)."""
+    """Common chart look (light: white ground, dark text), with the Dugout Data watermark (and an optional data credit)."""
     fig.add_annotation(text="Dugout Data", xref="paper", yref="paper", x=1, y=1, xanchor="right", yanchor="top",
-                       showarrow=False, font=dict(size=11, color="#6f6e67"))
+                       showarrow=False, font=dict(size=11, color=MARK))
     if credit:
         fig.add_annotation(text=credit, xref="paper", yref="paper", x=0, y=-0.02, xanchor="left", yanchor="top",
                            yshift=-28, showarrow=False, font=dict(size=10, color=MUTED))
-    fig.update_layout(template="plotly_dark", height=height,
+    fig.update_layout(template="plotly_white", height=height,
                       margin=dict(l=8, r=8, t=30 if legend else 22, b=52 if credit else 8),
                       font=dict(family="Source Sans Pro, Source Sans 3, Arial, sans-serif", size=13, color=INK),
-                      paper_bgcolor=SURFACE, plot_bgcolor=SURFACE, barcornerradius=4, bargap=0.25,
+                      paper_bgcolor=CHART_BG, plot_bgcolor=CHART_BG, barcornerradius=4, bargap=0.25,
                       bargroupgap=0.08, showlegend=legend,
-                      hoverlabel=dict(bgcolor=SURFACE_2, bordercolor=BORDER, font_color=INK),
+                      hoverlabel=dict(bgcolor=CHART_BG, bordercolor=BORDER, font_color=INK),
                       legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(color=MUTED)))
-    fig.update_xaxes(title=xtitle, showgrid=False, linecolor=BORDER, tickfont=dict(color=MUTED))
+    fig.update_xaxes(title=xtitle, showgrid=False, linecolor=BORDER, tickfont=dict(color=MUTED), automargin=True)
     fig.update_yaxes(title=ytitle, title_font=dict(color=MUTED, size=12), gridcolor=GRID, showgrid=True,
-                     zeroline=True, zerolinecolor="#5f5e58", linecolor=BORDER, tickfont=dict(color=MUTED))
+                     zeroline=True, zerolinecolor=ZERO, linecolor=BORDER, tickfont=dict(color=MUTED),
+                     automargin=True)
     return fig
 
 
@@ -1285,10 +1312,10 @@ def show(fig, key):
 
 
 def polarity_bars(x, y, hover, ytitle, key, height=300, credit=None):
-    """One measure where the sign matters (RAA, WPA): blue above average, red below."""
+    """One measure where the sign matters (RAA, WPA): green above average, red below."""
     y = np.asarray(y, dtype=float)
     fig = go.Figure(go.Bar(x=x, y=y, marker_color=[POS if v >= 0 else NEG for v in y],
-                           marker_line=dict(color=SURFACE, width=2), hovertext=hover, hoverinfo="text"))
+                           marker_line=dict(color=CHART_BG, width=2), hovertext=hover, hoverinfo="text"))
     show(layout(fig, height=height, ytitle=ytitle, credit=credit), key)
 
 
@@ -1296,7 +1323,7 @@ def grouped_bars(x, series, ytitle, key, height=320, credit=None):
     """series: list of (label, values). Up to 3 series, fixed colour order, legend shown."""
     fig = go.Figure()
     for i, (label, vals) in enumerate(series):
-        fig.add_bar(name=label, x=x, y=vals, marker_color=SERIES[i], marker_line=dict(color=SURFACE, width=2),
+        fig.add_bar(name=label, x=x, y=vals, marker_color=SERIES[i], marker_line=dict(color=CHART_BG, width=2),
                     hovertemplate=f"%{{x}}<br>{label}: %{{y:,.2f}}<extra></extra>")
     fig.update_layout(barmode="group")
     show(layout(fig, height=height, ytitle=ytitle, legend=len(series) > 1, credit=credit), key)
@@ -1309,8 +1336,8 @@ ZONES = {5: "Long-off", 6: "Cover", 7: "Point", 8: "Third man", 1: "Fine leg", 2
          3: "Midwicket", 4: "Long-on"}
 ZONE_ANGLE = {5: 22.5, 6: 67.5, 7: 112.5, 8: 157.5, 1: 202.5, 2: 247.5, 3: 292.5, 4: 337.5}
 ZONE_MEASURES = {"runs": "Runs", "fours": "Fours", "sixes": "Sixes"}
-SEQ = [[0, "#1d2733"], [1, "#2e6bb8"]]                          # dark to deep accent (white text AA)
-DIV = [[0, "#b84a4a"], [0.5, SURFACE_2], [1, "#2e6bb8"]]        # below average, level, above average
+SEQ = [[0, "#EEF4FC"], [1, "#7FAEE9"]]                          # pale to mid blue (dark text AA on both)
+DIV = [[0, "#EE9A9A"], [0.5, SURFACE], [1, "#7FAEE9"]]          # below average, level, above average
 
 
 def zone_shares(z):
@@ -1331,12 +1358,12 @@ def field_chart(values, labels, hover, key, diverging=False, scale_max=None, cre
     fig = go.Figure(go.Barpolar(
         theta=[ZONE_ANGLE[k] for k in ZONES], r=[0.86] * 8, base=0.14, width=[44] * 8,
         marker=dict(color=np.nan_to_num(vals), colorscale=DIV if diverging else SEQ,
-                    cmin=-top if diverging else 0, cmax=top, line=dict(color=SURFACE, width=2)),
+                    cmin=-top if diverging else 0, cmax=top, line=dict(color=CHART_BG, width=2)),
         hovertext=hover, hoverinfo="text"))
     fig.add_scatterpolar(theta=[ZONE_ANGLE[k] for k in ZONES], r=[0.62] * 8, mode="text", text=labels,
                          textfont=dict(color=INK, size=12), hoverinfo="skip")
     lay = layout(fig, height=height, credit=credit)
-    lay.update_layout(polar=dict(bgcolor=SURFACE, hole=0,
+    lay.update_layout(polar=dict(bgcolor=CHART_BG, hole=0,
                                  angularaxis=dict(rotation=90, direction="clockwise", showticklabels=False,
                                                   showgrid=False, linecolor=BORDER, ticks=""),
                                  radialaxis=dict(visible=False, range=[0, 1])),

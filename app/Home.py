@@ -30,9 +30,9 @@ if "common" not in sys.modules:
 import common as c  # noqa: E402  (heavy: pandas, numpy; after the loading line on purpose)
 import data_files  # noqa: E402
 
-if st.get_option("theme.base") != "dark":
+if st.get_option("theme.base") != "light":
     # .streamlit/config.toml was not loaded (Streamlit reads it from the folder it starts in).
-    print("Dugout Data: dark theme not loaded. Start Streamlit from the project folder.")
+    print("Dugout Data: light theme not loaded. Start Streamlit from the project folder.")
 st.markdown(c.CSS, unsafe_allow_html=True)
 
 if not os.environ.get("DD_DB"):

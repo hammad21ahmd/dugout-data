@@ -1,19 +1,19 @@
-# Dugout Data: Streamlit settings (no secrets here). Design rules: docs/STYLE.md. Dark by default.
+# Dugout Data: Streamlit settings (no secrets here). Design rules: docs/STYLE.md. Light theme, blue and white.
 # Streamlit reads this file from the folder it is started in (the project or repo root).
 [theme]
-base = "dark"
-primaryColor = "#4f94e5"
-linkColor = "#4f94e5"
-backgroundColor = "#111212"
-secondaryBackgroundColor = "#1a1a19"
-textColor = "#f0efec"
-borderColor = "#2f2f2c"
+base = "light"
+primaryColor = "#1565C0"
+linkColor = "#1565C0"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F3F6FB"
+textColor = "#0F1B2D"
+borderColor = "#D9E2EF"
 showWidgetBorder = true
 baseRadius = "8px"
-dataframeHeaderBackgroundColor = "#222220"
-dataframeHeaderTextColor = "#c3c2b7"
-dataframeBorderColor = "#2f2f2c"
-chartCategoricalColors = ["#4f94e5", "#d95926", "#199e70"]
+dataframeHeaderBackgroundColor = "#E8EEF7"
+dataframeHeaderTextColor = "#0F1B2D"
+dataframeBorderColor = "#D9E2EF"
+chartCategoricalColors = ["#1F6FD0", "#DD6C26", "#18A06B"]
 
 [browser]
 gatherUsageStats = false
