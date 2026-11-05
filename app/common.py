@@ -910,6 +910,9 @@ def record_tables(lo, hi):
             if "fours" not in out[0]:
                 # an export made before 4s and 6s were precomputed: add them (one quick count, no data change)
                 out[0] = _with_boundaries(out[0], lo, hi)
+            if "ducks" not in out[0] or "maidens" not in out[1]:
+                # an export made before these columns: add them (quick counts, no data change)
+                out[0], out[1] = _with_extras(out[0], out[1], lo, hi)
             return (*out, int(info["unresolved"].iloc[0]))
     return compute_record_tables(lo, hi)
 
@@ -925,6 +928,95 @@ def _with_boundaries(bat, lo, hi):
     for col in ("fours", "sixes"):
         bat[col] = bat.index.map(b[col]).fillna(0).astype(int)
     return bat
+
+
+_NOT_OUT_SQL = "('retired hurt', 'retired not out')"
+
+
+def _with_extras(bat, bowl, lo, hi):
+    """Adds to the batting records: dots (balls faced with no run off the bat), ducks (out for 0) and
+    30s (innings of 30 to 49); to the bowling records: maidens (an over of the bowler with 6 legal balls
+    and no run conceded), 4W (innings of exactly 4 bowler wickets), 5W (5 or more), wides and no-balls
+    (deliveries). Innings 1 and 2 only, the chosen seasons."""
+    args = (lo, hi)
+    xb = query(f"""WITH inn AS (SELECT match_id, inning, pid, SUM(r) runs FROM (
+                       SELECT d.match_id, d.inning, d.batter_id pid, d.batsman_runs r {_REC_BASE}
+                       UNION ALL SELECT d.match_id, d.inning, d.non_striker_id, 0 {_REC_BASE}) GROUP BY 1, 2, 3),
+                   o AS (SELECT DISTINCT d.match_id, d.inning, d.player_dismissed_id pid {_REC_BASE}
+                       AND COALESCE(d.player_dismissed_id, '') != '' AND d.dismissal_kind NOT IN {_NOT_OUT_SQL})
+                   SELECT i.pid, SUM(i.runs = 0 AND o.pid IS NOT NULL) ducks,
+                          SUM(i.runs BETWEEN 30 AND 49) thirties
+                   FROM inn i LEFT JOIN o ON o.match_id = i.match_id AND o.inning = i.inning AND o.pid = i.pid
+                   GROUP BY 1""", args * 3).set_index("pid")
+    dots = query(f"""SELECT d.batter_id pid, SUM(d.batsman_runs = 0 AND COALESCE(d.extras_type, '') NOT LIKE '%wides%')
+                     dots {_REC_BASE} GROUP BY 1""", args).set_index("pid")
+    bat = bat.copy()
+    bat["dots"] = bat.index.map(dots["dots"]).fillna(0).astype(int)
+    bat["dot_pct"] = div(bat["dots"], bat["balls"], 100)
+    for col in ("ducks", "thirties"):
+        bat[col] = bat.index.map(xb[col]).fillna(0).astype(int)
+    ov = query(f"""SELECT pid, SUM(legal >= 6 AND conceded = 0) maidens FROM (
+                     SELECT d.match_id, d.inning, d.over_no, d.bowler_id pid,
+                            SUM(COALESCE(d.extras_type, '') NOT LIKE '%wides%'
+                                AND COALESCE(d.extras_type, '') NOT LIKE '%noballs%') legal,
+                            SUM({_CONCEDED}) conceded {_REC_BASE} GROUP BY 1, 2, 3, 4) GROUP BY 1""",
+               args).set_index("pid")
+    wi = query(f"""SELECT pid, SUM(w = 4) four_w, SUM(w >= 5) five_w, SUM(wd) wides, SUM(nb) noballs FROM (
+                     SELECT d.match_id, d.inning, d.bowler_id pid,
+                            SUM(d.dismissal_kind IN ('bowled','caught','lbw','stumped','caught and bowled','hit wicket')) w,
+                            SUM(COALESCE(d.extras_type, '') LIKE '%wides%') wd,
+                            SUM(COALESCE(d.extras_type, '') LIKE '%noballs%') nb {_REC_BASE} GROUP BY 1, 2, 3)
+                   GROUP BY 1""", args).set_index("pid")
+    bowl = bowl.copy()
+    bowl["maidens"] = bowl.index.map(ov["maidens"]).fillna(0).astype(int)
+    for col in ("four_w", "five_w", "wides", "noballs"):
+        bowl[col] = bowl.index.map(wi[col]).fillna(0).astype(int)
+    return bat, bowl
+
+
+def _fielder_lookup():
+    """A function: fielder's Cricsheet name -> player_id, from the match squad, else a unique name, else that
+    team's squad in the season, else across seasons (substitutes are not in the match squad); None if not
+    found. The cached dicts are read once per call of this function, not once per name."""
+    sq, uq, seasons_sq = squad_ids(), unique_ids(), _squad_by_team_season()
+
+    def find(match_id, team, season, nm):
+        nm = str(nm or "").strip().replace(" (sub)", "")
+        return (sq.get((match_id, team, nm)) or uq.get(nm)
+                or seasons_sq.get((team, season, nm)) or seasons_sq.get((team, None, nm)))
+    return find
+
+
+@st.cache_data(show_spinner=False, max_entries=80)
+def fielding_table(lo, hi):
+    """Per-player fielding in the chosen seasons: catches (as Most catches: wicketkeepers included, caught
+    and bowled for the bowler), run outs (every fielder named in the run out is credited), stumpings and
+    dismissals per match played. Returns (table indexed by player_id, fielder names not matched)."""
+    d = query(f"""SELECT d.match_id, m.season, d.bowling_team team, d.dismissal_kind kind, d.fielder, d.bowler_id
+                  {_REC_BASE} AND d.dismissal_kind IN ('caught', 'caught and bowled', 'run out', 'stumped')""",
+              (lo, hi))
+    rows, unresolved, find_fielder = [], 0, _fielder_lookup()
+    for r in d.itertuples(index=False):
+        if r.kind == "caught and bowled":
+            rows.append((r.bowler_id, "ct"))
+            continue
+        names = str(r.fielder or "").split(",")
+        for nm in (names if r.kind == "run out" else names[:1]):
+            if not nm.strip():
+                continue
+            pid = find_fielder(r.match_id, r.team, r.season, nm)
+            if pid is None:
+                unresolved += 1
+            else:
+                rows.append((pid, {"caught": "ct", "run out": "ro", "stumped": "st"}[r.kind]))
+    t = pd.DataFrame(rows, columns=["pid", "what"]).value_counts().unstack(fill_value=0)
+    t = t.reindex(columns=["ct", "ro", "st"], fill_value=0)
+    t["dis"] = t[["ct", "ro", "st"]].sum(axis=1)
+    mat = query("""SELECT x.player_id pid, COUNT(DISTINCT x.match_id) mat FROM match_players x JOIN matches m
+                   USING (match_id) WHERE m.season BETWEEN ? AND ? GROUP BY 1""", (lo, hi)).set_index("pid")["mat"]
+    t["mat"] = t.index.map(mat).fillna(0).astype(int)
+    t["per_match"] = div(t["dis"], t["mat"])
+    return t, unresolved
 
 
 def compute_record_tables(lo, hi):
@@ -972,19 +1064,16 @@ def compute_record_tables(lo, hi):
     bowl["econ"] = div(bowl["conceded"], bowl["legal"], 6)
     bowl["sr"] = div(bowl["legal"], bowl["wkts"])
     bowl["mat"] = bowl.index.map(mat).fillna(0).astype(int)
+    bat, bowl = _with_extras(bat, bowl, lo, hi)
     # catches: caught (fielder, wicketkeepers included) and caught and bowled (the bowler)
     ct = query(f"""SELECT d.match_id, m.season, d.bowling_team team, d.dismissal_kind kind, d.fielder, d.bowler_id
                    {_REC_BASE} AND d.dismissal_kind IN ('caught', 'caught and bowled')""", args)
-    sq = squad_ids()
-    seasons_sq = _squad_by_team_season()
-    catcher, unresolved = [], 0
+    catcher, unresolved, find_fielder = [], 0, _fielder_lookup()
     for r in ct.itertuples(index=False):
         if r.kind == "caught and bowled":
             catcher.append(r.bowler_id)
             continue
-        nm = str(r.fielder or "").split(",")[0].strip().replace(" (sub)", "")
-        pid = (sq.get((r.match_id, r.team, nm)) or unique_ids().get(nm)
-               or seasons_sq.get((r.team, r.season, nm)) or seasons_sq.get((r.team, None, nm)))
+        pid = find_fielder(r.match_id, r.team, r.season, str(r.fielder or "").split(",")[0])
         if pid is None:
             unresolved += 1
         catcher.append(pid)
@@ -1034,6 +1123,313 @@ def player_summary(pid, lo, hi):
         "bowl_dot": div(bowl["bowl_dot"].sum(), lb, 100).item(),
         "bowl_raa": val["raa_bowl"]["raa"].sum(), "bowl_wpa": val["wpa_bowl"]["wpa"].sum(),
     }
+
+
+# ------------------------------------------------------------------ teams (Teams page)
+_FACED = "COALESCE(d.extras_type, '') NOT LIKE '%wides%'"
+_LEGAL = _FACED + " AND COALESCE(d.extras_type, '') NOT LIKE '%noballs%'"
+_OUT = f"(COALESCE(d.player_dismissed_id, '') != '' AND d.dismissal_kind NOT IN {_NOT_OUT_SQL})"
+
+
+def _result_for(team, m):
+    """W, L, T (tie: super overs are not in the data) or NR for `team` in matches `m`."""
+    w = m["winner"].fillna("")
+    return np.where(w == team, "W", np.where(w != "", "L", np.where(m["result"] == "tie", "T", "NR")))
+
+
+@st.cache_data(show_spinner=False, max_entries=80)
+def season_review(lo, hi):
+    """One row per season: matches, champion (winner of the season's last match, the final), top run-scorer
+    (runs off the bat; fewer balls wins a tie), top wicket-taker (bowler wickets; fewer runs conceded wins
+    a tie), fours and sixes per match (balls faced with 4 or 6 off the bat)."""
+    m = in_seasons(matches(), lo, hi)
+    bt = query(f"""SELECT m.season, d.batter_id pid, SUM(d.batsman_runs) runs, SUM({_FACED}) balls,
+                          SUM(d.batsman_runs = 4 AND {_FACED}) f4, SUM(d.batsman_runs = 6 AND {_FACED}) f6
+                   {_REC_BASE} GROUP BY 1, 2""", (lo, hi))
+    bw = query(f"""SELECT m.season, d.bowler_id pid, SUM({_CONCEDED}) conceded,
+                          SUM(d.dismissal_kind IN ('bowled','caught','lbw','stumped','caught and bowled','hit wicket')) wkts
+                   {_REC_BASE} GROUP BY 1, 2""", (lo, hi))
+    rows = []
+    for s, g in m.groupby("season"):
+        fin = g.sort_values(["date", "match_id"]).iloc[-1]
+        champ = fin["winner"] or "No result"
+        opp = fin["team2"] if fin["team1"] == champ else fin["team1"]
+        b = bt[bt["season"] == s].sort_values(["runs", "balls", "pid"], ascending=[False, True, True])
+        w = bw[bw["season"] == s].sort_values(["wkts", "conceded", "pid"], ascending=[False, True, True])
+        rows.append({"Season": s, "Matches": len(g), "Champion": champ, "Final v": code(opp) if fin["winner"] else "",
+                     "Top run-scorer": name(b["pid"].iloc[0]), "Runs": int(b["runs"].iloc[0]),
+                     "Top wicket-taker": name(w["pid"].iloc[0]), "Wkts": int(w["wkts"].iloc[0]),
+                     "4s per match": b["f4"].sum() / len(g), "6s per match": b["f6"].sum() / len(g)})
+    return pd.DataFrame(rows)
+
+
+def team_results(team, lo, hi):
+    """Every match of `team` in the chosen seasons, newest first: date, opponent, result and margin."""
+    m = in_seasons(matches(), lo, hi)
+    m = m[(m["team1"] == team) | (m["team2"] == team)].sort_values(["date", "match_id"], ascending=False)
+    out = pd.DataFrame({"match_id": m["match_id"].values, "Date": m["date"].map(date_fmt).values,
+                        "Season": m["season"].values,
+                        "Opp": np.where(m["team1"] == team, m["team2"], m["team1"]), "Result": _result_for(team, m)})
+    out["Opp"] = out["Opp"].map(code)
+    out["Margin"] = [f"by {int(r)} runs" if pd.notna(r) and r else f"by {int(k)} wickets" if pd.notna(k) and k else ""
+                     for r, k in zip(m["win_by_runs"], m["win_by_wickets"])]
+    return out
+
+
+def streaks(results):
+    """(current streak, longest winning streak) from results newest first: ('W3', 5)."""
+    cur = 0
+    for r in results:
+        if r != results[0]:
+            break
+        cur += 1
+    best = run = 0
+    for r in results:
+        run = run + 1 if r == "W" else 0
+        best = max(best, run)
+    return (f"{results[0]}{cur}" if len(results) else "-"), best
+
+
+@st.cache_data(show_spinner=False, max_entries=200)
+def head_to_head(a, b, lo, hi):
+    """Matches between franchises a and b: results, and each side's batting in every phase (runs including
+    extras, run rate per legal over, wickets lost). Returns (summary dict, phase table)."""
+    m = in_seasons(matches(), lo, hi)
+    m = m[((m["team1"] == a) & (m["team2"] == b)) | ((m["team1"] == b) & (m["team2"] == a))]
+    res = _result_for(a, m)
+    summ = {"matches": len(m), "a_wins": int((res == "W").sum()), "b_wins": int((res == "L").sum()),
+            "ties": int((res == "T").sum()), "nr": int((res == "NR").sum())}
+    if m.empty:
+        return summ, pd.DataFrame()
+    ids = list(m["match_id"])
+    d = query(f"""SELECT d.match_id, d.inning, d.batting_team team, d.over_no, d.total_runs runs,
+                         ({_LEGAL}) legal, {_OUT} wkt
+                  FROM deliveries d WHERE d.inning IN (1, 2) AND d.match_id IN ({','.join('?' * len(ids))})""",
+              tuple(ids))
+    ph = phases()
+    d["phase_no"] = 0
+    for r in ph.itertuples():
+        d.loc[(d["over_no"] + 1).between(r.first_over, r.last_over), "phase_no"] = r.phase_no
+    inns = d.groupby("team")[["match_id", "inning"]].apply(lambda x: len(x.drop_duplicates()))
+    summ["a_runs"], summ["b_runs"] = (int(d.loc[d["team"] == t, "runs"].sum()) for t in (a, b))
+    summ["a_inns"], summ["b_inns"] = int(inns.get(a, 0)), int(inns.get(b, 0))
+    g = d.groupby(["phase_no", "team"]).agg(runs=("runs", "sum"), legal=("legal", "sum"), wkts=("wkt", "sum"))
+    rows = []
+    for n, label in phase_names().items():
+        r = {"Phase": label}
+        for t, k in ((a, "A"), (b, "B")):
+            x = g.loc[(n, t)] if (n, t) in g.index else pd.Series({"runs": 0, "legal": 0, "wkts": 0})
+            r[f"{k} RR"] = div(x["runs"], x["legal"], 6).item()
+            r[f"{k} wkts"] = int(x["wkts"])
+        rr_a, rr_b = r["A RR"], r["B RR"]
+        r["Stronger"] = code(a) if rr_a > rr_b else code(b) if rr_b > rr_a else "Level"
+        rows.append(r)
+    return summ, pd.DataFrame(rows)
+
+
+@st.cache_data(show_spinner=False, max_entries=80)
+def team_style(lo, hi):
+    """Per franchise: batting runs in 4s and 6s % (of runs off the bat) and dot % (balls faced with no run off
+    the bat); bowling the same conceded, and dot % (legal balls with no run conceded)."""
+    bat = query(f"""SELECT d.batting_team team, SUM(d.batsman_runs) runs,
+                           SUM(CASE WHEN {_FACED} AND d.batsman_runs IN (4, 6) THEN d.batsman_runs ELSE 0 END) bruns,
+                           SUM({_FACED}) faced, SUM({_FACED} AND d.batsman_runs = 0) dots {_REC_BASE} GROUP BY 1""",
+                (lo, hi)).set_index("team")
+    bowl = query(f"""SELECT d.bowling_team team, SUM(d.batsman_runs) runs,
+                            SUM(CASE WHEN {_FACED} AND d.batsman_runs IN (4, 6) THEN d.batsman_runs ELSE 0 END) bruns,
+                            SUM({_LEGAL}) legal, SUM(({_LEGAL}) AND ({_CONCEDED}) = 0) dots
+                     {_REC_BASE} GROUP BY 1""", (lo, hi)).set_index("team")
+    t = pd.DataFrame({"Team": bat.index})
+    t["Bat: runs in 4s and 6s %"] = t["Team"].map(pd.Series(div(bat["bruns"], bat["runs"], 100), bat.index))
+    t["Bat: dot %"] = t["Team"].map(pd.Series(div(bat["dots"], bat["faced"], 100), bat.index))
+    t["Bowl: runs in 4s and 6s %"] = t["Team"].map(pd.Series(div(bowl["bruns"], bowl["runs"], 100), bowl.index))
+    t["Bowl: dot %"] = t["Team"].map(pd.Series(div(bowl["dots"], bowl["legal"], 100), bowl.index))
+    return t
+
+
+@st.cache_data(show_spinner=False, max_entries=200)
+def wicket_types(team, lo, hi):
+    """How `team` lost wickets (batting) and took them (bowling and fielding), with the PSL share of each kind.
+    Dismissals only: retired hurt and retired not out are left out."""
+    d = query(f"""SELECT d.batting_team bat, d.bowling_team bowl, d.dismissal_kind kind {_REC_BASE}
+                  AND {_OUT}""", (lo, hi))
+    known = ["caught", "bowled", "lbw", "run out", "stumped", "caught and bowled", "hit wicket"]
+    d["kind"] = d["kind"].where(d["kind"].isin(known), "other")
+    order = known + ["other"]
+    lost = d[d["bat"] == team]["kind"].value_counts().reindex(order, fill_value=0)
+    took = d[d["bowl"] == team]["kind"].value_counts().reindex(order, fill_value=0)
+    psl = d["kind"].value_counts().reindex(order, fill_value=0)
+    t = pd.DataFrame({"How out": [k.upper() if k == "lbw" else k[0].upper() + k[1:] for k in order], "Lost": lost.values,
+                      "Lost %": div(lost.values, lost.sum(), 100), "Taken": took.values,
+                      "Taken %": div(took.values, took.sum(), 100), "PSL %": div(psl.values, psl.sum(), 100)})
+    return t[(t["Lost"] > 0) | (t["Taken"] > 0)]
+
+
+def player_movement(team, lo, hi):
+    """Players of `team` in the chosen seasons who also played for another franchise in them: the
+    franchise code for each season (squads), most matches for `team` first."""
+    pt = in_seasons(player_teams(), lo, hi)
+    mine = set(pt.loc[pt["team"] == team, "player_id"])
+    moved = pt[pt["player_id"].isin(mine)].groupby("player_id")["team"].nunique()
+    moved = moved[moved > 1].index
+    g = pt[pt["player_id"].isin(moved)].copy()
+    g["code"] = g["team"].map(code)
+    grid = g.groupby(["player_id", "season"])["code"].agg(lambda x: "/".join(sorted(x))).unstack()
+    mp = query("SELECT x.player_id, COUNT(*) n FROM match_players x JOIN matches m USING (match_id) "
+               "WHERE x.team = ? AND m.season BETWEEN ? AND ? GROUP BY 1", (team, lo, hi)).set_index("player_id")["n"]
+    grid = grid.reindex(columns=[s for s in SEASONS if lo <= s <= hi]).fillna("")
+    grid.insert(0, "Matches for team", grid.index.map(mp).fillna(0).astype(int))
+    grid.insert(0, "Player", grid.index.map(name))
+    grid.columns = [str(x) for x in grid.columns]
+    return grid.sort_values(["Matches for team", "Player"], ascending=[False, True]).reset_index(drop=True)
+
+
+# ------------------------------------------------------------------ partnerships (Home, Player)
+@st.cache_data(show_spinner=False, max_entries=80)
+def partnership_stands(lo, hi):
+    """One row per stand: the two batters at the crease together (batter and non_striker, either end) in an
+    innings; runs include extras, balls exclude wides. Innings 1 and 2 only."""
+    return query(f"""SELECT MIN(d.batter_id, d.non_striker_id) a, MAX(d.batter_id, d.non_striker_id) b,
+                            d.match_id, d.inning, d.batting_team team, SUM(d.total_runs) runs, SUM({_FACED}) balls
+                     {_REC_BASE} GROUP BY 1, 2, 3, 4, 5""", (lo, hi))
+
+
+def _pairs(s):
+    g = s.groupby(["a", "b"]).agg(inns=("runs", "size"), runs=("runs", "sum"), balls=("balls", "sum"),
+                                  best=("runs", "max"), fifty=("runs", lambda r: int((r >= 50).sum()))).reset_index()
+    g["rr"] = div(g["runs"], g["balls"], 6)
+    g["avg"] = div(g["runs"], g["inns"])
+    return g.sort_values(["runs", "balls"], ascending=[False, True]).reset_index(drop=True)
+
+
+def top_partnerships(lo, hi, n=10):
+    """The pairs with the most partnership runs together in the chosen seasons."""
+    g = _pairs(partnership_stands(lo, hi)).head(n)
+    g["Pair"] = [f"{name(a)} and {name(b)}" for a, b in zip(g["a"], g["b"])]
+    return g
+
+
+def player_partners(pid, lo, hi, n=10):
+    """`pid`'s batting partners, most partnership runs first."""
+    s = partnership_stands(lo, hi)
+    s = s[(s["a"] == pid) | (s["b"] == pid)].copy()
+    s["partner"] = np.where(s["a"] == pid, s["b"], s["a"])
+    g = _pairs(s.assign(a=pid, b=s["partner"])).head(n)
+    g["Partner"] = g["b"].map(name)
+    return g
+
+
+# ------------------------------------------------------------------ one match (Player > Matches)
+def match_overs(match_id):
+    """Runs (extras included) and wickets (dismissals, not retired hurt or not out) in every over of
+    innings 1 and 2 of one match."""
+    return query(f"""SELECT d.inning, d.batting_team team, d.over_no + 1 over, SUM(d.total_runs) runs, SUM({_OUT}) wkts
+                     FROM deliveries d WHERE d.match_id = ? AND d.inning IN (1, 2) GROUP BY 1, 2, 3 ORDER BY 1, 3""",
+                 (match_id,))
+
+
+@st.cache_data(show_spinner=False)
+def has_wp_ball():
+    return not query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'wp_ball'").empty
+
+
+def match_wp(match_id):
+    """Ball-by-ball win probability of the side batting first (wp_ball, from the export), in seq order;
+    x is overs gone in the match (second innings after 20). None if this export has no wp_ball."""
+    if not has_wp_ball():
+        return None
+    w = query("SELECT inning, seq, over_no, batting_team, wp_after FROM wp_ball WHERE match_id = ? "
+              "AND inning IN (1, 2) ORDER BY inning, seq", (match_id,))
+    if w.empty:
+        return w
+    w["k"] = w.groupby(["inning", "over_no"]).cumcount() + 1
+    w["n"] = w.groupby(["inning", "over_no"])["seq"].transform("size")
+    w["x"] = (w["inning"] - 1) * 20 + w["over_no"] + w["k"] / w["n"]
+    w["wp_first"] = np.where(w["inning"] == 1, w["wp_after"], 1 - w["wp_after"]) * 100
+    return w
+
+
+def match_charts(overs, wp, team1, team2, key):
+    """Win probability line (side batting first, %) and runs per over for both innings, wickets marked."""
+    if wp is not None and len(wp):
+        fig = go.Figure()
+        fig.add_scatter(x=wp["x"], y=wp["wp_first"], mode="lines", name=f"{team1} win chance",
+                        line=dict(color=BAT, width=2),
+                        hovertemplate="Over %{x:.1f}: %{y:.0f}%<extra></extra>")
+        fig.add_hline(y=50, line=dict(color=ZERO, width=1, dash="dot"))
+        fig.add_vline(x=20, line=dict(color=ZERO, width=1))
+        fig.update_yaxes(range=[0, 100])
+        show(layout(fig, height=280, xtitle=f"Overs ({team1} bat 0 to 20, {team2} 20 to 40)",
+                    ytitle=f"{code(team1)} win chance %"), key + "_wp")
+    fig = go.Figure()
+    for i, (inn, t) in enumerate(((1, team1), (2, team2))):
+        o = overs[overs["inning"] == inn]
+        fig.add_scatter(x=o["over"], y=o["runs"], mode="lines+markers", name=f"{code(t)} runs",
+                        line=dict(color=SERIES[i], width=2), marker=dict(color=SERIES[i], size=5),
+                        hovertemplate=f"{code(t)} over %{{x}}: %{{y}} runs<extra></extra>")
+        wk = o[o["wkts"] > 0]
+        fig.add_scatter(x=wk["over"], y=wk["runs"], mode="markers", name=f"{code(t)} wicket",
+                        marker=dict(color=NEG, size=11, symbol="x-thin", line=dict(color=NEG, width=2)),
+                        text=wk["wkts"], hovertemplate=f"{code(t)} over %{{x}}: %{{text}} wicket(s)<extra></extra>")
+    show(layout(fig, height=300, xtitle="Over", ytitle="Runs in the over", legend=True), key + "_overs")
+
+
+# ------------------------------------------------------------------ venues: chasing, defending, the toss
+def venue_results(m, first_team):
+    """Chasing against defending and the toss for matches `m` (indexed by match_id) with a winner;
+    first_team: side batting first per match. Returns (chase table, toss table)."""
+    m = m[m["winner"].fillna("") != ""].copy()
+    m["first"] = m.index.map(first_team)
+    m = m[m["first"].notna()]
+    dfd = m[m["winner"] == m["first"]]
+    chs = m[m["winner"] != m["first"]]
+    n = len(m)
+    chase = pd.DataFrame([
+        {"Result": "Batting first won (defended)", "Matches": len(dfd), "Share %": div(len(dfd), n, 100).item(),
+         "Average margin": f"{dfd['win_by_runs'].mean():.1f} runs" if len(dfd) and dfd["win_by_runs"].notna().any() else "-"},
+        {"Result": "Batting second won (chased)", "Matches": len(chs), "Share %": div(len(chs), n, 100).item(),
+         "Average margin": f"{chs['win_by_wickets'].mean():.1f} wickets" if len(chs) and chs["win_by_wickets"].notna().any() else "-"}])
+    rows = []
+    for dec, label in (("bat", "Chose to bat"), ("field", "Chose to field")):
+        t = m[m["toss_decision"] == dec]
+        won = int((t["winner"] == t["toss_winner"]).sum())
+        rows.append({"Toss decision": label, "Matches": len(t), "Toss winner won": won,
+                     "Toss winner won %": div(won, len(t), 100).item()})
+    return chase, pd.DataFrame(rows)
+
+
+POSITION_GROUPS = [("Top order (1 to 3)", 1, 3), ("Middle order (4 to 6)", 4, 6), ("Lower order (7 to 11)", 7, 11)]
+
+
+def position_stats(pid, lo, hi):
+    """Batting by position in the order (first appearance at the crease, batting_positions): innings,
+    runs, balls faced, strike rate and average (every dismissal, as the career average)."""
+    b = in_seasons(balls_for(pid), lo, hi)
+    pos = query("SELECT match_id, inning, position FROM batting_positions WHERE player_id = ?", (pid,))
+    bat = b[b["batter_id"] == pid].groupby(["match_id", "inning"]).agg(runs=("batsman_runs", "sum"),
+                                                                       balls=("faced", "sum")).reset_index()
+    outs = b[(b["player_dismissed_id"] == pid) & b["out_any"]][["match_id", "inning"]].drop_duplicates().assign(out=1)
+    inn = (b.loc[(b["batter_id"] == pid) | (b["non_striker_id"] == pid), ["match_id", "inning"]].drop_duplicates()
+           .merge(pos, on=["match_id", "inning"], how="left").merge(bat, on=["match_id", "inning"], how="left")
+           .merge(outs, on=["match_id", "inning"], how="left").fillna({"runs": 0, "balls": 0, "out": 0}))
+    rows = []
+    for label, a, z in POSITION_GROUPS:
+        g = inn[inn["position"].between(a, z)]
+        if len(g):
+            rows.append({"Position": label, "Inns": len(g), "Runs": int(g["runs"].sum()),
+                         "Balls": int(g["balls"].sum()), "Outs": int(g["out"].sum())})
+    t = pd.DataFrame(rows, columns=["Position", "Inns", "Runs", "Balls", "Outs"])
+    t["SR"] = div(t["Runs"], t["Balls"], 100)
+    t["Avg"] = div(t["Runs"], t["Outs"])
+    return t
+
+
+def boundary_stats(runs, balls, fours, sixes):
+    """Balls per four, balls per six, boundary ball % (fours and sixes per ball faced) and % of runs in
+    boundaries (4 x fours + 6 x sixes over runs off the bat)."""
+    return {"balls_per_4": div(balls, fours).item(), "balls_per_6": div(balls, sixes).item(),
+            "bdry_pct": div(fours + sixes, balls, 100).item(),
+            "bdry_runs_pct": div(4 * fours + 6 * sixes, runs, 100).item()}
 
 
 # ------------------------------------------------------------------ strengths and weaknesses (Player)

@@ -70,6 +70,18 @@ c.cards([("Par score", c.fmt(r["par"]), "median first-innings total"),
          ("Spin economy", c.fmt(r["Spin econ"], 2), "runs per over by spinners"),
          ("Spin share", c.pct(r["Spin share"]), "of legal balls bowled by spinners")], lead=True)
 
+c.section("Chasing or defending, and the toss", "Matches with a winner at this ground, against all PSL "
+                                                 "matches in the chosen seasons.")
+first_team = first["team"]
+ch_v, toss_v = c.venue_results(m[m["venue_name"] == venue], first_team)
+ch_p, toss_p = c.venue_results(m, first_team)
+ch_v["PSL %"], toss_v["PSL: toss winner won %"] = ch_p["Share %"].values, toss_p["Toss winner won %"].values
+c.table(ch_v, column_config={"Result": c.col_text(), "Matches": c.col_int(), "Share %": c.col_pct(),
+                             "Average margin": c.col_text(width="small"), "PSL %": c.col_pct()})
+c.table(toss_v, column_config={"Toss decision": c.col_text(), "Matches": c.col_int(help="Tosses with this choice"),
+                               "Toss winner won": c.col_int(), "Toss winner won %": c.col_pct(),
+                               "PSL: toss winner won %": c.col_pct()})
+
 c.section("By season")
 v = m[m["venue_name"] == venue].reset_index()
 vs = v.groupby("season").agg(Matches=("match_id", "count"), Par=("first_total", "median"),

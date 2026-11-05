@@ -30,11 +30,22 @@ NUM = {"Mat": c.col_int(help="Matches played"), "Inns": c.col_int(help="Innings 
        "Avg": c.col_1(help=c.HELP["Avg"]), "SR": c.col_1(help=c.HELP["SR"]), "50s": c.col_int(), "100s": c.col_int(),
        "4s": c.col_int(help="Fours"), "6s": c.col_int(help="Sixes"),
        "Overs": c.col_1(help="Overs bowled (3.2 = 3 overs 2 balls)"), "Wkts": c.col_int(help="Bowler wickets"),
-       "Best": st.column_config.TextColumn("Best", help="Best bowling in an innings: wickets/runs", width="small",
+       "BBI": st.column_config.TextColumn("BBI", help="Best bowling in an innings: wickets/runs", width="small",
                                            alignment="right"),
        "Econ": c.col_2(help=c.HELP["Econ"]), "Bowl SR": c.col_1("SR", help="Balls bowled per wicket"),
        "Bowl avg": c.col_1("Avg", help="Runs conceded per wicket"), "Conceded": c.col_int("Runs", help="Runs conceded"),
        "Ct": c.col_int(help="Catches, wicketkeepers included; caught and bowled counts for the bowler"),
+       "Dots %": c.col_pct(help=c.HELP["Dot %"]), "Ducks": c.col_int(help="Out for 0"),
+       "30s": c.col_int(help="Innings of 30 to 49"), "Maidens": c.col_int(help="Overs of 6 legal balls, no run conceded"),
+       "4W": c.col_int(help="Innings with exactly 4 wickets"), "5W": c.col_int(help="Innings with 5 or more wickets"),
+       "Wides": c.col_int(help="Wides bowled (deliveries)"), "NB": c.col_int(help="No-balls bowled (deliveries)"),
+       "RO": c.col_int(help="Run outs: every fielder named in the run out is credited"),
+       "St": c.col_int(help="Stumpings"), "Dis": c.col_int(help="Catches plus run outs plus stumpings"),
+       "Per match": c.col_2(help="Fielding dismissals per match played"),
+       "Balls per 4": c.col_1(help="Balls faced per four"),
+       "Balls per 6": c.col_1(help="Balls faced per six"),
+       "Boundary %": c.col_pct(help="Fours and sixes per ball faced"),
+       "Runs in 4s and 6s %": c.col_pct(help="Share of runs off the bat that came in fours and sixes"),
        "Player": c.col_text(), "#": st.column_config.NumberColumn(format="%d", width=40)}
 
 
@@ -74,19 +85,24 @@ def leaderboard(table, metric, min_balls):
 VALUE_TABS = {"Batting RAA": ("raa_bat", "raa"), "Bowling RAA": ("raa_bowl", "raa"),
               "Batting WPA": ("wpa_bat", "wpa"), "Bowling WPA": ("wpa_bowl", "wpa")}
 c.section("Records and leaderboards")
-tabs = st.tabs(["Most runs", "Most wickets", "Most catches", "Best economy", "Best strike rate"] + list(VALUE_TABS))
+tabs = st.tabs(["Most runs", "Most wickets", "Most catches", "Best economy", "Best strike rate"] + list(VALUE_TABS)
+               + ["Boundaries", "Fielding", "Partnerships"])
 
 with tabs[0]:
     t = ranked(bat.sort_values(["runs", "balls"], ascending=[False, True]), 10)
     t = t.rename(columns={"mat": "Mat", "inns": "Inns", "runs": "Runs", "hs": "HS", "avg": "Avg", "sr": "SR",
-                          "fifties": "50s", "hundreds": "100s", "fours": "4s", "sixes": "6s"})
-    c.table(t[["#", "Player", "Mat", "Inns", "Runs", "HS", "Avg", "SR", "50s", "100s", "4s", "6s"]], column_config=NUM)
+                          "fifties": "50s", "hundreds": "100s", "fours": "4s", "sixes": "6s",
+                          "balls": "Balls", "dot_pct": "Dots %", "ducks": "Ducks", "thirties": "30s"})
+    c.table(t[["#", "Player", "Mat", "Inns", "Runs", "HS", "Avg", "SR", "Balls", "Dots %", "30s", "50s", "100s",
+               "Ducks", "4s", "6s"]], column_config=NUM)
     c.note("Average counts every dismissal, including run-outs at the non-striker's end.")
 with tabs[1]:
     t = ranked(bowl.sort_values(["wkts", "conceded"], ascending=[False, True]), 10)
-    t = t.rename(columns={"mat": "Mat", "overs": "Overs", "wkts": "Wkts", "best": "Best", "avg": "Bowl avg",
-                          "econ": "Econ", "sr": "Bowl SR"})
-    c.table(t[["#", "Player", "Mat", "Overs", "Wkts", "Best", "Bowl avg", "Econ", "Bowl SR"]], column_config=NUM)
+    t = t.rename(columns={"mat": "Mat", "overs": "Overs", "wkts": "Wkts", "best": "BBI", "avg": "Bowl avg",
+                          "econ": "Econ", "sr": "Bowl SR", "maidens": "Maidens", "four_w": "4W",
+                          "five_w": "5W", "wides": "Wides", "noballs": "NB"})
+    c.table(t[["#", "Player", "Mat", "Overs", "Wkts", "BBI", "Bowl avg", "Econ", "Bowl SR", "Maidens", "4W", "5W",
+               "Wides", "NB"]], column_config=NUM)
     c.note("Wickets credited to the bowler (not run-outs). Runs conceded include wides and no-balls, not byes "
            "or leg-byes.")
 with tabs[2]:
@@ -116,7 +132,7 @@ with tabs[4]:
                                           "sr": "SR", "avg": "Avg"})
         c.table(t[["#", "Player", "Mat", "Inns", "Runs", "Balls", "SR", "Avg"]], column_config=NUM)
 
-for tab, (label, (table, metric)) in zip(tabs[5:], VALUE_TABS.items()):
+for tab, (label, (table, metric)) in zip(tabs[5:9], VALUE_TABS.items()):
     with tab:
         mb = st.slider("Minimum balls", 0, 600, 120, 30, key=f"min_{table}",
                        help="Balls faced for batting, balls bowled for bowling, in the chosen seasons.")
@@ -133,6 +149,42 @@ for tab, (label, (table, metric)) in zip(tabs[5:], VALUE_TABS.items()):
             c.col_wpa(help=c.HELP["per 100 balls"]),
             "Wins": c.col_wpa(help=c.HELP["Wins"])})
         c.note(c.HELP["RAA"] if metric == "raa" else c.HELP["WPA"] + " WPA is missing for 18 matches (see Method).")
+
+with tabs[9]:
+    min_bd = st.slider("Minimum balls faced", 0, 1500, 300, 50, key="rec_min_bdry",
+                       help="Players with at least this many balls faced in the chosen seasons.")
+    t = bat[bat["balls"] >= max(min_bd, 1)].copy()
+    if t.empty:
+        c.empty("No batter has faced that many balls in these seasons.", " Lower the minimum or widen the seasons.")
+    else:
+        t["Balls per 4"], t["Balls per 6"] = c.div(t["balls"], t["fours"]), c.div(t["balls"], t["sixes"])
+        t["Boundary %"] = c.div(t["fours"] + t["sixes"], t["balls"], 100)
+        t["Runs in 4s and 6s %"] = c.div(4 * t["fours"] + 6 * t["sixes"], t["runs"], 100)
+        t = ranked(t.sort_values(["Boundary %", "balls"], ascending=[False, False]), 10).rename(
+            columns={"balls": "Balls", "runs": "Runs", "fours": "4s", "sixes": "6s"})
+        c.table(t[["#", "Player", "Balls", "Runs", "4s", "6s", "Boundary %", "Balls per 4", "Balls per 6",
+                   "Runs in 4s and 6s %"]], column_config=NUM)
+        c.note("Balls faced exclude wides. Ranked by boundary %: fours and sixes per ball faced.")
+with tabs[10]:
+    fd, f_unres = c.fielding_table(lo, hi)
+    t = ranked(fd.sort_values(["dis", "mat"], ascending=[False, True]), 10).rename(
+        columns={"mat": "Mat", "ct": "Ct", "ro": "RO", "st": "St", "dis": "Dis", "per_match": "Per match"})
+    c.table(t[["#", "Player", "Mat", "Dis", "Ct", "RO", "St", "Per match"]], column_config=NUM)
+    c.note("Catches as in Most catches. A run out credits every fielder named in it. "
+           + (f"{f_unres} fielder name{'s' if f_unres != 1 else ''} (substitutes) could not be matched to a player."
+              if f_unres else ""))
+with tabs[11]:
+    t = c.top_partnerships(lo, hi)
+    t.insert(0, "#", range(1, len(t) + 1))
+    c.table(t[["#", "Pair", "inns", "runs", "balls", "rr", "best", "fifty"]]
+            .rename(columns={"inns": "Inns", "runs": "Runs", "balls": "Balls", "rr": "Run rate", "best": "Best",
+                             "fifty": "50+"}),
+            column_config={"#": NUM["#"], "Pair": c.col_text(width="large"), "Inns": c.col_int(help="Stands together"),
+                           "Runs": c.col_int(help="Partnership runs, extras included"),
+                           "Balls": c.col_int(help="Balls faced, wides not counted"),
+                           "Run rate": c.col_2(help="Runs per 6 balls faced"), "Best": c.col_int(help="Highest stand"),
+                           "50+": c.col_int(help="Stands of 50 or more")})
+    c.note("A stand is two batters at the crease together in an innings, whichever end.")
 
 c.note("Cricsheet has 23 of the 24 matches of PSL 2016, so totals that include 2016 can be slightly below "
        "official PSL records. See Method.")
@@ -164,7 +216,7 @@ c.section("Explore")
 links = [("views/player.py", "Player", "Any player's value, seasons, phases and game log."),
          ("views/matchups.py", "Matchups", "Batter v bowler, and against each type of bowling."),
          ("views/compare.py", "Compare", "Two players side by side."),
-         ("views/teams.py", "Teams", "Where each franchise gains and loses runs."),
+         ("views/teams.py", "Teams", "Value, form, head to head and every season."),
          ("views/venues.py", "Venues", "Par scores, chasing, pace v spin, the toss."),
          ("views/method.py", "Method", "How every number is made, and its limits.")]
 cols = st.columns(len(links))

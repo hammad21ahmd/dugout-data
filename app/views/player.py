@@ -82,6 +82,19 @@ with t_over:
                  ("Average", c.fmt(S["avg"]), f"{S['outs']:,} outs"),
                  ("Strike rate", c.fmt(S["sr"]), ""),
                  ("50s", c.num_fmt(S["fifties"]), f"HS {S['hs']}")], lead=True, detail=True)
+        f4, f6 = int(bat["four"].sum()), int(bat["six"].sum())
+        bs = c.boundary_stats(runs, balls_f, f4, f6)
+        c.section("Boundaries", "Balls faced exclude wides.")
+        c.cards([("Balls per four", c.fmt(bs["balls_per_4"]), f"{f4:,} fours"),
+                 ("Balls per six", c.fmt(bs["balls_per_6"]), f"{f6:,} sixes"),
+                 ("Boundary balls", c.pct(bs["bdry_pct"]), "fours and sixes per ball"),
+                 ("Runs in 4s and 6s", c.pct(bs["bdry_runs_pct"]), "of runs off the bat")], detail=True)
+    fd = c.fielding_table(lo, hi)[0]
+    if pid in fd.index:
+        f = fd.loc[pid]
+        st.markdown(f'<p class="dd-meta"><b>Fielding:</b> {int(f["ct"])} catches, {int(f["ro"])} run outs, '
+                    f'{int(f["st"])} stumpings; {c.fmt(f["per_match"], 2)} dismissals per match '
+                    f'({int(f["mat"])} matches).</p>', unsafe_allow_html=True)
     if S["bowl"]:
         c.section("Bowling")
         c.cards([("Bowling RAA", c.raa_fmt(S["bowl_raa"]), ""),
@@ -153,6 +166,16 @@ with t_phase:
                                "Outs": c.col_int(help="Dismissals on strike"), "SR": c.col_1(help=c.HELP["SR"]),
                                "Dot %": c.col_pct(help=c.HELP["Dot %"]), "Boundary %": c.col_pct(help=c.HELP["Boundary %"]),
                                "RAA": c.col_raa(), "RAA per 100": c.col_raa(help=c.HELP["per 100 balls"])})
+    c.section("Batting by position", "Position in the batting order: the order in which batters first came to "
+                                     "the crease in that innings.")
+    pt = c.position_stats(pid, lo, hi)
+    if pt.empty:
+        c.empty("Did not bat in these seasons.")
+    else:
+        c.table(pt[["Position", "Inns", "Runs", "Balls", "SR", "Avg"]],
+                column_config={"Position": c.col_text(), "Inns": c.col_int(), "Runs": c.col_int(),
+                               "Balls": c.col_int(help="Balls faced, wides not counted"),
+                               "SR": c.col_1(help=c.HELP["SR"]), "Avg": c.col_1(help=c.HELP["Avg"])})
     c.section("Bowling by phase")
     if bowl.empty:
         c.empty("Did not bowl in these seasons.")
@@ -204,6 +227,17 @@ with t_match:
                                "Balls per wkt": c.col_1(help=c.HELP["Balls per dismissal"]),
                                "Dot %": c.col_pct(help=c.HELP["Dot %"])})
     c.note("Styles come from Wikipedia and DBpedia only. Unknown means no public source for that player yet.")
+    c.section("Best batting partners", "Partnership runs together (extras included), balls faced (no wides).")
+    pp = c.player_partners(pid, lo, hi)
+    if pp.empty:
+        c.empty("Did not bat in these seasons.")
+    else:
+        c.table(pp[["Partner", "inns", "runs", "balls", "rr", "best", "fifty"]]
+                .rename(columns={"inns": "Inns", "runs": "Runs", "balls": "Balls", "rr": "Run rate", "best": "Best",
+                                 "fifty": "50+"}),
+                column_config={"Partner": c.col_text(), "Inns": c.col_int(help="Stands together"), "Runs": c.col_int(),
+                               "Balls": c.col_int(), "Run rate": c.col_2(help="Runs per 6 balls faced"),
+                               "Best": c.col_int(help="Highest stand"), "50+": c.col_int(help="Stands of 50 or more")})
 
 # ------------------------------------------------------------------ strengths and weaknesses
 with t_str:
@@ -268,5 +302,25 @@ with t_log:
             c.progression_chart(bat_b, out_b, bowl_b, key="progression")
         else:
             c.empty("Did not bat or bowl in this match.")
+
+        ov = c.match_overs(mid)
+        t1 = ov.loc[ov["inning"] == 1, "team"].iloc[0] if (ov["inning"] == 1).any() else ""
+        t2 = ov.loc[ov["inning"] == 2, "team"].iloc[0] if (ov["inning"] == 2).any() else ""
+        wp = c.match_wp(mid)
+        c.section("The match", f"Win chance of {t1} (batting first) after every ball, and runs and wickets in "
+                               "every over of both innings.")
+        if wp is None:
+            c.note("Win probability needs a newer data file (wp_ball). Over by over is shown below.")
+        elif wp.empty:
+            c.note("No win probability for this match (see Method).")
+        if len(ov):
+            c.match_charts(ov, wp, t1, t2, key="match")
+            grid = ov.pivot_table(index="over", columns="inning", values=["runs", "wkts"], aggfunc="sum")
+            tab = pd.DataFrame({"Over": grid.index})
+            for inn, t in ((1, t1), (2, t2)):
+                if ("runs", inn) in grid.columns:
+                    tab[f"{c.code(t)} runs"] = grid[("runs", inn)].values
+                    tab[f"{c.code(t)} wkts"] = grid[("wkts", inn)].values
+            c.table(tab, column_config={k: c.col_int() for k in tab.columns})
 
 c.footer()
