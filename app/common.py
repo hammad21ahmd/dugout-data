@@ -232,6 +232,13 @@ a {{ color: {ACCENT}; }}
   .stTabs [role="tab"] {{ padding: .4rem .3rem; }}
   .stTabs [role="tab"] p {{ font-size: .84rem; }}
 }}
+@media (max-width: 640px) {{
+  /* Player's seven tabs: two rows of four columns (4 + 3) instead of a bar that scrolls sideways;
+     the accent line (react-aria-SelectionIndicator) sits inside the active tab, so it follows to row 2 */
+  .st-key-dd_player_tabs [role="tablist"] {{ display: grid; grid-template-columns: repeat(4, auto);
+                                             overflow-x: visible; row-gap: .1rem; }}
+  .st-key-dd_player_tabs [role="tab"] {{ justify-content: center; }}
+}}
 @media (max-width: 380px) {{
   .stTabs [role="tab"] {{ padding: .4rem .2rem; }}
   .stTabs [role="tab"] p {{ font-size: .78rem; }}
@@ -1696,6 +1703,89 @@ def match_rows(pid, lo, hi):
     out["WPA"] = [w.get(m, np.nan) for m in mids]
     out["Result"] = np.where(mine["winner"].values == mine["team"].values, "Won",
                              np.where(mine["winner"].fillna("").values == "", "No result or tie", "Lost"))
+    return out
+
+
+# ------------------------------------------------------------------ venues and teams (Player page)
+VT_MIN_BAT = 30          # default minimum balls faced for a row of the batting tables
+VT_MIN_BOWL = 12         # default minimum legal balls for a row of the bowling tables
+
+
+@st.cache_data(show_spinner=False)
+def bat_raa_rates():
+    """The average-player standard behind batting RAA, read back from raa_bat: expected runs and outs per
+    ball faced for each season and phase (the same for every player of that season and phase), and each
+    season's runs per wicket. Batting RAA of any set of balls is then
+    runs - balls * rpb + (balls * opb - outs on strike) * rpw, which adds up to raa_bat exactly.
+    tests/checks.py checks these against MySQL raa_baseline."""
+    r = value("raa_bat")
+    g = r.groupby(["season", "phase_no"]).agg(balls=("balls", "sum"), er=("exp_runs", "sum"),
+                                              eo=("exp_outs", "sum")).reset_index()
+    g["rpb"], g["opb"] = g["er"] / g["balls"], g["eo"] / g["balls"]
+    k = r[(r["exp_outs"] - r["outs"]).abs() >= 1]
+    rpw = ((k["raa"] - (k["runs"] - k["exp_runs"])) / (k["exp_outs"] - k["outs"])).groupby(k["season"]).median()
+    g["rpw"] = g["season"].map(rpw)
+    return g[["season", "phase_no", "rpb", "opb", "rpw"]]
+
+
+def venue_team_splits(pid, lo, hi):
+    """One player's batting and bowling at each venue and against each team, in the chosen seasons, every
+    row (no minimum), most balls first. Same rules as the rest of the page: innings 1 and 2, balls faced
+    without wides, legal balls without wides and no-balls, runs conceded without byes and leg-byes, bowler
+    wickets only, venue spellings joined (venue_name). Batting Avg counts every dismissal, like the career
+    average; RAA uses outs on strike, like raa_bat."""
+    b = in_seasons(balls_for(pid), lo, hi).copy()
+    b["venue"] = b["venue_name"].map(ground)
+    mp = in_seasons(query("SELECT x.match_id, x.team, x.player_id, m.season, m.team1, m.team2, m.venue_name "
+                          "FROM match_players x JOIN matches m USING (match_id) WHERE x.player_id = ?", (pid,)), lo, hi)
+    mp = mp.assign(venue=mp["venue_name"].map(ground),
+                   opp=np.where(mp["team1"] == mp["team"], mp["team2"], mp["team1"]))
+    bat, bowl = b[b["batter_id"] == pid], b[b["bowler_id"] == pid]
+    dism = b[(b["player_dismissed_id"] == pid) & b["out_any"]]
+    crease = b[(b["batter_id"] == pid) | (b["non_striker_id"] == pid)]
+    rates = bat_raa_rates()
+    out = {}
+    for key, col, bat_opp, bowl_opp in (("venue", "venue", "venue", "venue"), ("team", "opp", "bowling_team",
+                                                                                "batting_team")):
+        label = "Venue" if key == "venue" else "Opposition"
+        mat = mp.groupby(col)["match_id"].nunique()
+        # batting
+        if bat.empty and crease.empty:
+            out[f"bat_{key}"] = pd.DataFrame()
+        else:
+            g = bat_stats(bat, bat_opp).set_index(bat_opp)
+            inns = crease.drop_duplicates(["match_id", "inning"]).groupby(bat_opp).size()
+            outs_all = dism.groupby(bat_opp).size()
+            r = bat.groupby(["season", "phase_no", bat_opp]).agg(n=("faced", "sum"), runs=("batsman_runs", "sum"),
+                                                                 o=("batter_out", "sum")).reset_index()
+            r = r.merge(rates, on=["season", "phase_no"], how="left")
+            r["raa"] = r["runs"] - r["n"] * r["rpb"] + (r["n"] * r["opb"] - r["o"]) * r["rpw"]
+            raa = r.groupby(bat_opp)["raa"].sum()
+            keys = sorted(set(inns.index) | set(g.index))
+            t = pd.DataFrame({label: keys})
+            t["Mat"] = t[label].map(mat).fillna(0).astype(int)
+            t["Inns"] = t[label].map(inns).fillna(0).astype(int)
+            t["Runs"] = t[label].map(g["runs"]).fillna(0).astype(int)
+            t["Balls"] = t[label].map(g["balls"]).fillna(0).astype(int)
+            t["Outs"] = t[label].map(outs_all).fillna(0).astype(int)
+            t["SR"] = div(t["Runs"], t["Balls"], 100)
+            t["Avg"] = div(t["Runs"], t["Outs"])
+            t["Boundary %"] = div(t[label].map(g["fours"] + g["sixes"]).fillna(0), t["Balls"], 100)
+            t["RAA"] = t[label].map(raa).fillna(0.0)
+            out[f"bat_{key}"] = t.sort_values(["Balls", label], ascending=[False, True]).reset_index(drop=True)
+        # bowling
+        if bowl.empty:
+            out[f"bowl_{key}"] = pd.DataFrame()
+        else:
+            g = bowl_stats(bowl, bowl_opp)
+            t = pd.DataFrame({label: g[bowl_opp]})
+            t["Mat"] = g[bowl_opp].map(bowl.groupby(bowl_opp)["match_id"].nunique()).astype(int)
+            t["Legal balls"] = g["balls"].astype(int)
+            t["Overs"] = g["balls"].map(overs_num)
+            t["Wkts"] = g["wkts"].astype(int)
+            t["Runs"] = g["runs"].astype(int)
+            t["Econ"], t["Avg"], t["Balls per wkt"], t["Dot %"] = g["econ"], g["avg"], g["sr"], g["dot_pct"]
+            out[f"bowl_{key}"] = t.sort_values(["Legal balls", label], ascending=[False, True]).reset_index(drop=True)
     return out
 
 

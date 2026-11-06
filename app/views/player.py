@@ -1,6 +1,6 @@
 """
 player.py - one player's PSL record: overview, seasons, phases, against each bowling type
-and batting hand (public styles only), game log. READ-ONLY.
+and batting hand (public styles only), venues and teams, game log. READ-ONLY.
 """
 
 import html
@@ -71,8 +71,9 @@ outs_all = len(dism)
 runs, balls_f = int(bat["batsman_runs"].sum()), int(bat["faced"].sum())
 pn = c.phase_names()
 
-t_over, t_str, t_seas, t_phase, t_match, t_log = st.tabs(
-    ["Overview", "Strengths", "Seasons", "Phases", "Matchups", "Matches"])
+with st.container(key="dd_player_tabs"):    # key: on a phone the seven tabs wrap into two rows (common.CSS)
+    t_over, t_str, t_seas, t_phase, t_match, t_vt, t_log = st.tabs(
+        ["Overview", "Strengths", "Seasons", "Phases", "Matchups", "Venues & Teams", "Matches"])
 
 # ------------------------------------------------------------------ overview
 S = c.player_summary(pid, lo, hi)
@@ -280,6 +281,54 @@ with t_str:
     c.note("Strike rate and dot balls use balls faced (bowling: legal balls). Dismissals for batting are outs on "
            "strike; for bowling, bowler wickets. Styles and batting hands come from Wikipedia, DBpedia and Wikidata, or are "
            "developer verified.")
+
+# ------------------------------------------------------------------ venues and teams
+VT_BAT_CFG = {"Venue": c.col_text(), "Opposition": c.col_text(), "Mat": c.col_int(help="Matches played"),
+              "Inns": c.col_int(help="Innings at the crease"), "Runs": c.col_int(),
+              "Balls": c.col_int(help="Balls faced, wides not counted"), "SR": c.col_1(help=c.HELP["SR"]),
+              "Avg": c.col_1(help=c.HELP["Avg"]), "Boundary %": c.col_pct(help=c.HELP["Boundary %"]),
+              "RAA": c.col_raa()}
+VT_BOWL_CFG = {"Venue": c.col_text(), "Opposition": c.col_text(), "Mat": c.col_int(help="Matches in which the player bowled"),
+               "Overs": c.col_1(help="Overs bowled (3.2 = 3 overs 2 balls)"), "Wkts": c.col_int(),
+               "Runs": c.col_int(help="Runs conceded"), "Econ": c.col_2(help=c.HELP["Econ"]),
+               "Avg": c.col_1(help=c.HELP["Avg"]), "Balls per wkt": c.col_1(help=c.HELP["Balls per dismissal"]),
+               "Dot %": c.col_pct(help=c.HELP["Dot %"])}
+VT_BAT_COLS = ["Mat", "Inns", "Runs", "Balls", "SR", "Avg", "Boundary %", "RAA"]
+VT_BOWL_COLS = ["Mat", "Overs", "Wkts", "Runs", "Econ", "Avg", "Balls per wkt", "Dot %"]
+
+with t_vt:
+    st.markdown('<p class="dd-meta">Batting and bowling at each PSL ground and against each team, in the chosen '
+                f'seasons. Rows need at least {c.VT_MIN_BAT} balls faced (batting) or {c.VT_MIN_BOWL} legal balls '
+                '(bowling); small samples swing a lot.</p>', unsafe_allow_html=True)
+    show_all = st.toggle("Show all", key="vt_all",
+                         help="Show every venue and team, including those below the minimum balls.")
+    V = c.venue_team_splits(pid, lo, hi)
+    for role, did, nothing in (("bat", S["bat"], "Did not bat in these seasons."),
+                               ("bowl", S["bowl"], "Did not bowl in these seasons.")):
+        for key, label, title in (("venue", "Venue", "at each venue"), ("team", "Opposition", "against each team")):
+            plural = "venues" if key == "venue" else "teams"
+            c.section(("Batting " if role == "bat" else "Bowling ") + title)
+            t = V[f"{role}_{key}"]
+            if not did or t.empty:
+                c.empty(nothing)
+                continue
+            n_col, minimum, unit = (("Balls", c.VT_MIN_BAT, "balls faced") if role == "bat"
+                                    else ("Legal balls", c.VT_MIN_BOWL, "legal balls"))
+            keep = t if show_all else t[t[n_col] >= minimum]
+            if keep.empty:
+                c.empty(f"No {key} with at least {minimum} {unit}.", " Switch on Show all to see every row.")
+            else:
+                cols = [label] + (VT_BAT_COLS if role == "bat" else VT_BOWL_COLS)
+                c.table(keep[cols], column_config={k: v for k, v in (VT_BAT_CFG if role == "bat" else VT_BOWL_CFG).items()
+                                                   if k in cols})
+            left = len(t) - len(keep)
+            c.note(f"Sample: {len(keep)} of {len(t)} {plural}, {int(keep[n_col].sum()):,} of {int(t[n_col].sum()):,} "
+                   f"{unit}." + (f" {left} {plural if left != 1 else plural[:-1]} under {minimum} {unit} left out; "
+                                 "switch on Show all to see them." if left else
+                                 (f" Rows under {minimum} {unit} are small samples." if show_all else "")))
+    c.note("Batting Avg counts every dismissal, like the career average; RAA counts outs on strike, like the rest "
+           "of the site. Runs conceded leave out byes and leg-byes; run outs are not bowler wickets. "
+           + c.HELP["RAA"])
 
 # ------------------------------------------------------------------ match by match
 with t_log:

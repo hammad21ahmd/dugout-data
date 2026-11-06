@@ -98,6 +98,16 @@ st.markdown("""
   runs conceded by legal ball (wickets marked), in the order the balls were bowled.
 """)
 
+c.section("Player: venues and teams")
+st.markdown(f"""
+- Batting and bowling at each ground (spellings of a ground joined) and against each opposing team, in the
+  chosen seasons, with the same counting rules as above.
+- A row needs at least {c.VT_MIN_BAT} balls faced (batting) or {c.VT_MIN_BOWL} legal balls (bowling); "Show all"
+  lists every row. The note under each table gives the sample: rows and balls shown out of the total.
+- Batting average counts every dismissal, like the career average. RAA is the same batting RAA as elsewhere,
+  split by the balls faced at that ground or against that team, so the rows add up to the player's batting RAA.
+""")
+
 c.section("Limits")
 st.markdown("""
 - RAA and WPA say how much value a player added, not why. They do not adjust for the ground,
@@ -108,6 +118,8 @@ st.markdown("""
   wicket by the runs it actually costs at that point of the innings.
 - Cricsheet has 23 of the 24 matches of PSL 2016 (one match is missing), so totals that include
   2016 (runs, wickets, catches and the records on Home) can be slightly below official PSL records.
+- Cricsheet lists two PSL matches as not available: Peshawar Zalmi vs Karachi Kings (11 Feb 2016)
+  and Multan Sultans vs Karachi Kings (2 Mar 2018). They are not included in this app.
 - Small samples swing a lot: use the minimum-balls filters.
 - Matchups depend on public styles; a bowler with no public style is left out of type tables.
 """)
