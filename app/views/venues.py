@@ -58,10 +58,11 @@ c.link_default("ground_pick", "ground", slugs, slugs[0])
 venue = g["venue_name"].iloc[slugs.index(st.selectbox("Ground", slugs, key="ground_pick",
                                                     format_func=lambda s: g["venue_name"].iloc[slugs.index(s)]))]
 c.link_set(ground=c.slug(c.ground(venue)))
+c.export_subject(venue)
 r = g[g["venue_name"] == venue].iloc[0]
 st.markdown(f'<p class="dd-meta">{int(r["Matches"])} matches, {r["seasons"]}; {int(r["Results"])} with a winner.</p>',
             unsafe_allow_html=True)
-c.cards([("Par score", c.fmt(r["par"]), "median first-innings total"),
+c.cards(export="Ground", items=[("Par score", c.fmt(r["par"]), "median first-innings total"),
          ("Average 1st innings", c.fmt(r["avg_first"]), "mean first-innings total"),
          ("Chasing side won", c.pct(r["chase"]), "of matches with a winner"),
          ("Toss winner won", c.pct(r["toss"]), "of matches with a winner"),

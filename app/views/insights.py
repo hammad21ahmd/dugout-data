@@ -19,6 +19,7 @@ import common as c  # noqa: E402
 
 c.page("Insights", "Where bowlers pitch it, where batters score, and how each length goes.")
 st.markdown(f'<span class="dd-chip"><b>{c.INSIGHTS_CREDIT}</b></span>', unsafe_allow_html=True)
+c.export_credit(c.INSIGHTS_CREDIT)
 c.note("The line, length and shot data on this page come from ESPNcricinfo ball-by-ball records. "
        "They are not Dugout Data's own data; Dugout Data only adds them up per player and season.")
 if not c.insights_available():

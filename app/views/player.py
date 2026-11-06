@@ -24,6 +24,7 @@ default = next((x for x in options if c.name(x) == "Babar Azam"), options[0])
 c.link_default("player_pick", "player", options, default)
 pid = st.selectbox("Player", options, key="player_pick", format_func=c.name, placeholder="Type a name")
 c.link_set(player=pid)
+c.export_subject(c.name(pid))
 
 b = c.in_seasons(c.balls_for(pid), lo, hi)      # only this player's balls (indexed)
 mp = c.in_seasons(c.query("SELECT x.match_id, x.team, x.player_id, m.season, m.date, m.team1, m.team2, "
@@ -75,7 +76,7 @@ S = c.player_summary(pid, lo, hi)
 with t_over:
     if S["bat"]:
         c.section("Batting")
-        c.cards([("Batting RAA", c.raa_fmt(S["bat_raa"]), ""),
+        c.cards(export="Batting", items=[("Batting RAA", c.raa_fmt(S["bat_raa"]), ""),
                  ("Batting WPA", c.fmt(S["bat_wpa"], 2, True), ""),
                  ("Runs", c.num_fmt(S["runs"]), f"{S['balls']:,} balls"),
                  ("Innings", c.num_fmt(S["innings"]), ""),
@@ -85,7 +86,7 @@ with t_over:
         f4, f6 = int(bat["four"].sum()), int(bat["six"].sum())
         bs = c.boundary_stats(runs, balls_f, f4, f6)
         c.section("Boundaries", "Balls faced exclude wides.")
-        c.cards([("Balls per four", c.fmt(bs["balls_per_4"]), f"{f4:,} fours"),
+        c.cards(export="Boundaries", items=[("Balls per four", c.fmt(bs["balls_per_4"]), f"{f4:,} fours"),
                  ("Balls per six", c.fmt(bs["balls_per_6"]), f"{f6:,} sixes"),
                  ("Boundary balls", c.pct(bs["bdry_pct"]), "fours and sixes per ball"),
                  ("Runs in 4s and 6s", c.pct(bs["bdry_runs_pct"]), "of runs off the bat")], detail=True)
@@ -97,7 +98,7 @@ with t_over:
                     f'({int(f["mat"])} matches).</p>', unsafe_allow_html=True)
     if S["bowl"]:
         c.section("Bowling")
-        c.cards([("Bowling RAA", c.raa_fmt(S["bowl_raa"]), ""),
+        c.cards(export="Bowling", items=[("Bowling RAA", c.raa_fmt(S["bowl_raa"]), ""),
                  ("Bowling WPA", c.fmt(S["bowl_wpa"], 2, True), ""),
                  ("Wickets", c.num_fmt(S["wkts"]), f"{S['conceded']:,} runs conceded"),
                  ("Overs", c.overs(S["legal"]), f"{S['bowl_matches']} matches"),
@@ -147,6 +148,7 @@ with t_seas:
         "Wkts": c.col_int(), "Econ": c.col_2(help=c.HELP["Econ"]),
         "Bat RAA": c.col_raa(), "Bowl RAA": c.col_raa(), "Total RAA": c.col_raa(),
         "Bat WPA": c.col_wpa(), "Bowl WPA": c.col_wpa()})
+    c.note(c.HELP["RAA"] + " " + c.HELP["WPA"])
 
 # ------------------------------------------------------------------ phases
 with t_phase:
@@ -192,8 +194,8 @@ with t_phase:
                                "Runs": c.col_int(), "Wkts": c.col_int(), "Econ": c.col_2(help=c.HELP["Econ"]),
                                "Dot %": c.col_pct(help=c.HELP["Dot %"]), "RAA": c.col_raa(),
                                "RAA per 100": c.col_raa(help=c.HELP["per 100 balls"])})
-    c.note("Batting outs here count dismissals on strike; the career average also counts run-outs at the "
-           "non-striker's end.")
+    c.note(c.HELP["RAA"] + " RAA per 100: the same per 100 balls. Batting outs here count dismissals on strike; "
+           "the career average also counts run-outs at the non-striker's end.")
 
 # ------------------------------------------------------------------ against types and hands
 with t_match:

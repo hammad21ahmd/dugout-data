@@ -10,7 +10,12 @@ import streamlit as st
 import common as c
 
 lo, hi = c.season_filter()
-c.page("PSL at a Glance", "Records, leaderboards and player value from every PSL ball since 2016.")
+c.page("PSL at a Glance", f"Records, leaderboards and player value, {c.season_label(lo, hi)}. "
+                          "For every season since 2016, choose All seasons at the top.")
+# Default minimums from common.record_minimums (one season, or a range). The slider key carries the kind of
+# range, so switching between one season and several starts from the matching default.
+MIN_OVERS, MIN_BALLS = c.record_minimums(lo, hi)
+KIND = "one" if lo == hi else "many"
 
 # ------------------------------------------------------------------ at a glance
 m = c.in_seasons(c.matches(), lo, hi)
@@ -94,7 +99,7 @@ with tabs[0]:
                           "fifties": "50s", "hundreds": "100s", "fours": "4s", "sixes": "6s",
                           "balls": "Balls", "dot_pct": "Dots %", "ducks": "Ducks", "thirties": "30s"})
     c.table(t[["#", "Player", "Mat", "Inns", "Runs", "HS", "Avg", "SR", "Balls", "Dots %", "30s", "50s", "100s",
-               "Ducks", "4s", "6s"]], column_config=NUM)
+               "Ducks", "4s", "6s"]], column_config=NUM, title="Most runs")
     c.note("Average counts every dismissal, including run-outs at the non-striker's end.")
 with tabs[1]:
     t = ranked(bowl.sort_values(["wkts", "conceded"], ascending=[False, True]), 10)
@@ -102,17 +107,17 @@ with tabs[1]:
                           "econ": "Econ", "sr": "Bowl SR", "maidens": "Maidens", "four_w": "4W",
                           "five_w": "5W", "wides": "Wides", "noballs": "NB"})
     c.table(t[["#", "Player", "Mat", "Overs", "Wkts", "BBI", "Bowl avg", "Econ", "Bowl SR", "Maidens", "4W", "5W",
-               "Wides", "NB"]], column_config=NUM)
+               "Wides", "NB"]], column_config=NUM, title="Most wickets")
     c.note("Wickets credited to the bowler (not run-outs). Runs conceded include wides and no-balls, not byes "
            "or leg-byes.")
 with tabs[2]:
     t = ranked(catches.sort_values("ct", ascending=False), 5).rename(columns={"mat": "Mat", "ct": "Ct"})
-    c.table(t[["#", "Player", "Mat", "Ct"]], column_config=NUM)
+    c.table(t[["#", "Player", "Mat", "Ct"]], column_config=NUM, title="Most catches")
     c.note("Includes catches by wicketkeepers; a caught and bowled counts for the bowler. Substitute fielders are "
            "credited by name" + (f"; {unresolved} catch{'es' if unresolved != 1 else ''} by substitutes could not "
                                  "be matched to a player and are left out." if unresolved else "."))
 with tabs[3]:
-    min_overs = st.slider("Minimum overs", 0, 200, 40, 5, key="rec_min_overs",
+    min_overs = st.slider("Minimum overs", 0, 200, MIN_OVERS, 5, key=f"rec_min_overs_{KIND}",
                           help="Players with at least this many overs bowled in the chosen seasons.")
     t = bowl[bowl["legal"] >= min_overs * 6].sort_values(["econ", "legal"], ascending=[True, False])
     if t.empty:
@@ -120,9 +125,9 @@ with tabs[3]:
     else:
         t = ranked(t, 10).rename(columns={"mat": "Mat", "overs": "Overs", "conceded": "Conceded", "wkts": "Wkts",
                                           "econ": "Econ"})
-        c.table(t[["#", "Player", "Mat", "Overs", "Conceded", "Wkts", "Econ"]], column_config=NUM)
+        c.table(t[["#", "Player", "Mat", "Overs", "Conceded", "Wkts", "Econ"]], column_config=NUM, title="Best economy")
 with tabs[4]:
-    min_sr_balls = st.slider("Minimum balls faced", 0, 1500, 300, 50, key="rec_min_balls",
+    min_sr_balls = st.slider("Minimum balls faced", 0, 1500, MIN_BALLS, 10, key=f"rec_min_balls_{KIND}",
                              help="Players with at least this many balls faced in the chosen seasons.")
     t = bat[bat["balls"] >= min_sr_balls].sort_values(["sr", "balls"], ascending=[False, False])
     if t.empty:
@@ -130,7 +135,7 @@ with tabs[4]:
     else:
         t = ranked(t, 10).rename(columns={"mat": "Mat", "inns": "Inns", "runs": "Runs", "balls": "Balls",
                                           "sr": "SR", "avg": "Avg"})
-        c.table(t[["#", "Player", "Mat", "Inns", "Runs", "Balls", "SR", "Avg"]], column_config=NUM)
+        c.table(t[["#", "Player", "Mat", "Inns", "Runs", "Balls", "SR", "Avg"]], column_config=NUM, title="Best strike rate")
 
 for tab, (label, (table, metric)) in zip(tabs[5:9], VALUE_TABS.items()):
     with tab:
@@ -140,7 +145,7 @@ for tab, (label, (table, metric)) in zip(tabs[5:9], VALUE_TABS.items()):
         if t.empty:
             c.empty("No player has that many balls in these seasons.", " Lower the minimum or widen the seasons.")
             continue
-        c.table(t, column_config={
+        c.table(t, title=label, column_config={
             "#": st.column_config.NumberColumn(format="%d", width=40), "Player": c.col_text(),
             "Team": c.col_teams(), "Balls": c.col_int(), "Runs": c.col_int(), "Wkts": c.col_int(),
             "SR": c.col_1(help=c.HELP["SR"]), "Econ": c.col_2(help=c.HELP["Econ"]),
@@ -151,7 +156,7 @@ for tab, (label, (table, metric)) in zip(tabs[5:9], VALUE_TABS.items()):
         c.note(c.HELP["RAA"] if metric == "raa" else c.HELP["WPA"] + " WPA is missing for 18 matches (see Method).")
 
 with tabs[9]:
-    min_bd = st.slider("Minimum balls faced", 0, 1500, 300, 50, key="rec_min_bdry",
+    min_bd = st.slider("Minimum balls faced", 0, 1500, MIN_BALLS, 10, key=f"rec_min_bdry_{KIND}",
                        help="Players with at least this many balls faced in the chosen seasons.")
     t = bat[bat["balls"] >= max(min_bd, 1)].copy()
     if t.empty:
@@ -163,20 +168,20 @@ with tabs[9]:
         t = ranked(t.sort_values(["Boundary %", "balls"], ascending=[False, False]), 10).rename(
             columns={"balls": "Balls", "runs": "Runs", "fours": "4s", "sixes": "6s"})
         c.table(t[["#", "Player", "Balls", "Runs", "4s", "6s", "Boundary %", "Balls per 4", "Balls per 6",
-                   "Runs in 4s and 6s %"]], column_config=NUM)
+                   "Runs in 4s and 6s %"]], column_config=NUM, title="Boundaries")
         c.note("Balls faced exclude wides. Ranked by boundary %: fours and sixes per ball faced.")
 with tabs[10]:
     fd, f_unres = c.fielding_table(lo, hi)
     t = ranked(fd.sort_values(["dis", "mat"], ascending=[False, True]), 10).rename(
         columns={"mat": "Mat", "ct": "Ct", "ro": "RO", "st": "St", "dis": "Dis", "per_match": "Per match"})
-    c.table(t[["#", "Player", "Mat", "Dis", "Ct", "RO", "St", "Per match"]], column_config=NUM)
+    c.table(t[["#", "Player", "Mat", "Dis", "Ct", "RO", "St", "Per match"]], column_config=NUM, title="Fielding")
     c.note("Catches as in Most catches. A run out credits every fielder named in it. "
            + (f"{f_unres} fielder name{'s' if f_unres != 1 else ''} (substitutes) could not be matched to a player."
               if f_unres else ""))
 with tabs[11]:
     t = c.top_partnerships(lo, hi)
     t.insert(0, "#", range(1, len(t) + 1))
-    c.table(t[["#", "Pair", "inns", "runs", "balls", "rr", "best", "fifty"]]
+    c.table(title="Partnerships", df=t[["#", "Pair", "inns", "runs", "balls", "rr", "best", "fifty"]]
             .rename(columns={"inns": "Inns", "runs": "Runs", "balls": "Balls", "rr": "Run rate", "best": "Best",
                              "fifty": "50+"}),
             column_config={"#": NUM["#"], "Pair": c.col_text(width="large"), "Inns": c.col_int(help="Stands together"),
@@ -207,9 +212,10 @@ else:
     cfg = {"Player": c.col_text(), **{k: c.col_raa() for k in move.columns if k != "Player"}}
     a, b = st.tabs(["Up most", "Down most"])
     with a:
-        c.table(move.sort_values("Change", ascending=False).head(8), column_config=cfg)
+        c.table(move.sort_values("Change", ascending=False).head(8), column_config=cfg, title="Biggest movers up")
     with b:
-        c.table(move.sort_values("Change").head(8), column_config=cfg)
+        c.table(move.sort_values("Change").head(8), column_config=cfg, title="Biggest movers down")
+    c.note(c.HELP["RAA"] + " Change = RAA " + str(hi) + " minus RAA " + str(prev) + ".")
 
 # ------------------------------------------------------------------ explore
 c.section("Explore")

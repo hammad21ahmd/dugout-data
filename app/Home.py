@@ -61,6 +61,7 @@ pages.append(st.Page("views/method.py", title="Method", url_path="method"))
 nav = st.navigation(pages, position="top")
 if loading is not None:
     loading.empty()
-c.header()
+c.owner_check(show_seasons=nav.url_path != "method")   # owner mode (HD exports); visitors: nothing changes
+c.header(show_seasons=nav.url_path != "method")   # Method: no number there depends on the seasons
 c.mobile_nav(pages, current=nav)
 nav.run()

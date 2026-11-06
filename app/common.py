@@ -3,7 +3,7 @@ common.py - shared code for the Dugout Data app (design system: docs/STYLE.md).
 
 READ-ONLY: opens psl.sqlite (and, for Insights, the aggregate file) in read-only mode; where
 they are found or downloaded is decided by data_files.py. No MySQL, no writes.
-Protection: no download buttons except the branded share card (a PNG with "Dugout Data"
+Protection: for visitors no download buttons except the branded share card (a PNG with "Dugout Data"
 and "Data: Cricsheet.org"), dataframe toolbar hidden, at most 50 rows per table,
 "Dugout Data" watermark on every chart.
 Data rules (CLAUDE.md): innings 1 and 2 only; phase = over_no + 1 mapped to this_phases;
@@ -13,6 +13,7 @@ with byes: 1 run to the bowler); bowler wickets are bowled, caught, lbw, stumped
 caught and bowled, hit wicket. Styles come only from public_style (Wikipedia/DBpedia).
 """
 
+import hmac
 import html
 import io
 import os
@@ -43,6 +44,7 @@ SEASONS = list(range(2016, 2027))
 BRAND = "Dugout Data"
 TAGLINE = "PSL player value, ball by ball"
 FOOTER = "Dugout Data | Data: Cricsheet.org | Analysis by Hammad"
+SITE = "dugout-data-hammad.streamlit.app"      # printed under owner-mode image exports
 BOWLER_KINDS = ["bowled", "caught", "lbw", "stumped", "caught and bowled", "hit wicket"]
 NOT_OUT_KINDS = ["retired hurt", "retired not out"]
 STYLE_ORDER = ["Right-arm Pace", "Left-arm Pace", "Right-arm Off-spin", "Right-arm Leg-spin",
@@ -182,6 +184,32 @@ a {{ color: {ACCENT}; }}
 [data-testid="stPlotlyChart"] {{ background: {CHART_BG}; border: 1px solid {BORDER}; border-radius: 10px; padding: 0;
                                  box-sizing: border-box; }}
 
+/* ---- phone copy of every table (common.phone_table): hidden on desktop, with its element box so the
+   desktop page keeps its spacing; at 640 px or less it replaces the grid ---- */
+[data-testid="stElementContainer"]:has(.dd-mtable) {{ display: none !important; }}
+.dd-mtable table {{ width: 100%; border-collapse: separate; border-spacing: 0; background: {SURFACE};
+                    border: 1px solid {BORDER}; border-radius: 10px; overflow: hidden; table-layout: auto; }}
+.dd-mtable th, .dd-mtable td {{ padding: .35rem .28rem; border-bottom: 1px solid {BORDER}; font-size: .78rem;
+                                line-height: 1.3; vertical-align: top; overflow-wrap: break-word; }}
+.dd-mtable th {{ color: {MUTED}; font-weight: 600; background: {SURFACE_2}; }}
+.dd-mtable td {{ color: {INK}; font-variant-numeric: tabular-nums; }}
+.dd-mtable .n {{ text-align: right; }}
+.dd-mtable .t {{ text-align: left; }}
+.dd-mtable tr:last-child td {{ border-bottom: 0; }}
+.dd-mcard {{ background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 10px; padding: .45rem .6rem;
+             margin: 0 0 .4rem 0; }}
+.dd-mcard > p {{ margin: 0 0 .25rem 0; font-weight: 700; font-size: .88rem; color: {INK}; overflow-wrap: break-word; }}
+.dd-mpairs {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: .15rem .5rem; }}
+.dd-mpairs > div {{ display: flex; justify-content: space-between; gap: .3rem; font-size: .78rem; min-width: 0;
+                    border-bottom: 1px dotted {BORDER}; }}
+.dd-mpairs span {{ color: {MUTED}; min-width: 0; overflow-wrap: break-word; }}
+.dd-mpairs b {{ color: {INK}; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right;
+                white-space: nowrap; }}
+@media (max-width: 640px) {{
+  [data-testid="stElementContainer"]:has(.dd-mtable) {{ display: block !important; }}
+  [data-testid="stElementContainer"]:has([data-testid="stDataFrame"]) {{ display: none !important; }}
+}}
+
 /* ---- footer ---- */
 .dd-footer {{ color: {MUTED}; font-size: .85rem; border-top: 1px solid {BORDER}; margin-top: 3rem; padding-top: .9rem; }}
 .dd-footer-credit {{ display: block; color: {MUTED}; }}
@@ -279,15 +307,17 @@ def slug(s):
 
 
 # ------------------------------------------------------------------ page frame
-def header():
+def header(show_seasons=True):
     """Same header on every page: brand, tagline, season filter. Drawn once by Home.py.
-    The season range is in the URL as ?seasons=2016-2026."""
+    The season range is in the URL as ?seasons=2016-2026 (no ?seasons= means DEFAULT_RANGE, the latest season).
+    show_seasons=False (Method, where no number depends on the seasons): brand only; the chosen range is kept
+    for the next page."""
     # The link wins on the first run, and when a ?seasons= link that differs from what this session last
     # wrote is opened inside a running session. An empty link (page switches clear it) changes nothing.
     st.session_state.setdefault("_slider_gen", 0)
     url = st.query_params.get("seasons", "")
     if "season_range" not in st.session_state or (url and url != st.session_state.get("_seasons_url")):
-        rng = (SEASONS[0], SEASONS[-1])
+        rng = DEFAULT_RANGE
         m = re.fullmatch(r"(\d{4})-(\d{4})", url)
         if m and int(m.group(1)) in SEASONS and int(m.group(2)) in SEASONS and int(m.group(1)) <= int(m.group(2)):
             rng = (int(m.group(1)), int(m.group(2)))
@@ -313,10 +343,16 @@ def header():
     slider_key = f"_season_widget_{st.session_state._slider_gen}"
     left, right = st.columns([2, 3], vertical_alignment="center")
     left.markdown('<div class="dd-brand"><b>Dugout<span> </span>Data</b></div>', unsafe_allow_html=True)
+    if not show_seasons:
+        st.markdown('<hr class="dd-rule">', unsafe_allow_html=True)
+        return st.session_state.season_range
     with right.container(horizontal=True, horizontal_alignment="right", vertical_alignment="center", gap="small",
                          key="dd_season_bar"):
-        st.segmented_control("Seasons", list(SEASON_PRESETS), key="_season_preset", on_change=pick,
-                             label_visibility="collapsed", help="Every page shows the PSL seasons chosen here.")
+        # Desktop: one dropdown of the presets (13 do not fit as buttons); empty with "Custom" when the range
+        # is a custom one, which the Custom button beside it sets.
+        st.selectbox("Seasons", list(SEASON_PRESETS), key="_season_preset", on_change=pick,
+                     placeholder="Custom", label_visibility="collapsed", width=150,
+                     help="Every page shows the PSL seasons chosen here.")
         with st.popover("Custom", type="tertiary" if preset_for(st.session_state.season_range) else "primary"):
             st.select_slider("Seasons", options=SEASONS, value=tuple(st.session_state.season_range),
                              key=slider_key, on_change=keep, args=(slider_key,),
@@ -325,7 +361,7 @@ def header():
         rng_txt = str(lo) if lo == hi else f"{lo}-{hi}"
         st.markdown(f'<span class="dd-seasons">{rng_txt}</span>', unsafe_allow_html=True)
         # Phone only (CSS, 768 px or less): the whole control is one dropdown showing only the current choice
-        # ("All seasons", "Last 3", "2026" or the custom range). Inside: the presets and "Custom range" with
+        # ("2026", "Last 3", "2019", "All seasons" or the custom range). Inside: the presets and "Custom range" with
         # the same slider. Hidden on desktop, where the preset buttons, Custom and the label show as before.
         now = preset_for(st.session_state.season_range)
         if now:
@@ -349,7 +385,7 @@ def header():
                                  key=phone_key, on_change=keep, args=(phone_key,),
                                  help="Choose the first and last season.")
     st.markdown('<hr class="dd-rule">', unsafe_allow_html=True)
-    want = f"{lo}-{hi}" if (lo, hi) != (SEASONS[0], SEASONS[-1]) else ""
+    want = f"{lo}-{hi}" if (lo, hi) != DEFAULT_RANGE else ""
     link_set(seasons=want or None)
     st.session_state._seasons_url = want
     return lo, hi
@@ -374,9 +410,19 @@ def mobile_nav(pages, current=None):
 
 
 
-SEASON_PRESETS = {"All seasons": (SEASONS[0], SEASONS[-1]), "Last 3": (SEASONS[-3], SEASONS[-1]),
-                  str(SEASONS[-1]): (SEASONS[-1], SEASONS[-1])}
+# Order agreed 2026-11-05 (revised): All seasons first, then the latest season (the default), Last 3, then every
+# season newest first. The default stays the latest season although All seasons is listed above it.
+SEASON_PRESETS = {"All seasons": (SEASONS[0], SEASONS[-1]), str(SEASONS[-1]): (SEASONS[-1], SEASONS[-1]),
+                  "Last 3": (SEASONS[-3], SEASONS[-1]), **{str(y): (y, y) for y in reversed(SEASONS[:-1])}}
+DEFAULT_RANGE = SEASON_PRESETS[str(SEASONS[-1])]     # a page opened without ?seasons= shows the latest season
 PHONE_CUSTOM = "Custom range"
+
+
+def record_minimums(lo, hi):
+    """Default minimums of Home's Best economy (overs) and Best strike rate and Boundaries (balls faced).
+    One season: 20 overs and 120 balls (40 and 300 left only 2 to 6 players in a season); a range of
+    seasons: 40 overs and 300 balls. The one place these numbers live (the app and tools/audit_records.py)."""
+    return (20, 120) if lo == hi else (40, 300)
 
 
 def preset_for(rng):
@@ -396,7 +442,7 @@ def page(title, subtitle=""):
 
 def season_filter():
     """Current season range (the widget is drawn once in the header)."""
-    st.session_state.setdefault("season_range", (SEASONS[0], SEASONS[-1]))
+    st.session_state.setdefault("season_range", DEFAULT_RANGE)
     return st.session_state.season_range
 
 
@@ -404,6 +450,8 @@ season_widget = header   # older name
 
 
 def section(title, help_text=""):
+    if is_owner():
+        st.session_state["_x_section"] = title          # the default title of the next image export
     st.markdown(f'<p class="dd-section">{html.escape(title)}</p>'
                 + (f'<p class="dd-section-help">{html.escape(help_text)}</p>' if help_text else ""),
                 unsafe_allow_html=True)
@@ -420,13 +468,13 @@ def footer(copyright=False, extra=""):
                 unsafe_allow_html=True)
 
 
-def cards(items, lead=False, detail=False):
+def cards(items, lead=False, detail=False, export=None):
     """items: (label, value, note). By default a card shows its label and value only; the note
     becomes the card's hover tooltip. A value that is not a number (a name, a role) is shown on
     one line in smaller type, with the note as one short figure below it (e.g. '+2,033 RAA').
     detail=True (Player, Matchups) shows the note as a short second line under the number too,
     because phones cannot show hover tooltips ('3,377 balls', 'HS 115', '10 fours, 5 sixes').
-    lead=True adds the accent rule (headline cards)."""
+    lead=True adds the accent rule (headline cards). export="Title": owner mode adds 'Save as image'."""
     cls = "dd-card lead" if lead else "dd-card"
     cells = []
     for k, v, n in items:
@@ -442,6 +490,10 @@ def cards(items, lead=False, detail=False):
                      f'<div class="{vcls}" title="{html.escape(str(v))}">{html.escape(str(v))}</div>'
                      + second + '</div>')
     st.markdown(f'<div class="dd-cards">{"".join(cells)}</div>', unsafe_allow_html=True)
+    if export and is_owner():
+        shown = [(k, v, n) for k, v, n in items]
+        t, sub, credits, key, fname = _export_context(export)
+        _save_button(lambda: cards_png(t, sub, credits, shown), key, fname)
 
 
 tiles = cards   # older name
@@ -460,7 +512,7 @@ def empty(title, hint=""):
 _PY_FMT = {"%d": "{:,.0f}", "%.1f": "{:,.1f}", "%.2f": "{:,.2f}", "%.1f%%": "{:,.1f}%", "%+.2f": "{:+,.2f}"}
 
 
-def table(df, column_config=None, **kwargs):
+def table(df, column_config=None, title=None, **kwargs):
     """st.dataframe with protection (at most MAX_ROWS rows, toolbar hidden by CSS, no index) and
     the house number formats: thousands separators; RAA columns without decimals once any value
     reaches 100; Season and # without separators. Values stay numbers, so they sort and align right."""
@@ -488,8 +540,68 @@ def table(df, column_config=None, **kwargs):
         cfg[col] = conf
     data = df.style.format(fmts, na_rep="-") if fmts else df
     st.dataframe(data, column_config=cfg, **kwargs)
+    # Phone (CSS, 640 px or less): the grid above is hidden and this plain HTML copy shows instead. A canvas
+    # grid cannot wrap text, so on a phone the last columns and long text (Method's Meaning) were cut off.
+    st.markdown(phone_table(df, cfg, fmts, index=not kwargs["hide_index"]), unsafe_allow_html=True)
+    if is_owner():                     # owner mode only: "Save as image" (title: `title`, else the section's)
+        export_table(df, cfg, fmts, title=title, index=not kwargs["hide_index"])
     if n > MAX_ROWS:
         note(f"Showing the first {MAX_ROWS} of {n} rows. Narrow the seasons or raise the minimum to see others.")
+
+
+PHONE_WIDTH = 326       # px of table at 360 px wide (block padding .9rem a side, 1 px border)
+_CHAR_PX, _CELL_PAD = 6.9, 9   # 12.5 px type: about 6.9 px per character; cell padding left plus right
+
+
+def _cell_text(v, py_fmt, conf):
+    """The text a grid cell shows: the house format, else the column's printf format, else the value."""
+    if v is None or (isinstance(v, float) and np.isnan(v)) or (not isinstance(v, str) and pd.isna(v)):
+        return "-"
+    try:
+        if py_fmt:
+            return py_fmt.format(v)
+        f = (conf or {}).get("type_config", {}).get("format") if isinstance(conf, dict) else None
+        if f and f.startswith("%"):
+            return f % v
+    except (TypeError, ValueError):
+        pass
+    return str(v)
+
+
+def phone_table(df, cfg, fmts, index=False):
+    """The phone copy of a table, as HTML that never needs sideways scrolling. If its columns fit in 360 px
+    (each column as wide as its longest word, header or cell), a table whose headers and cells wrap; else
+    (wide record tables) one small card per row: the row's name on top, then label and value pairs."""
+    if index:
+        df = df.reset_index()
+    cols = list(df.columns)
+    heads = [str((cfg.get(c) or {}).get("label") or c) if isinstance(cfg.get(c), dict) else str(c) for c in cols]
+    rows = [[_cell_text(v, fmts.get(c), cfg.get(c)) for c, v in zip(cols, r)] for r in df.itertuples(index=False)]
+    numeric = [pd.api.types.is_numeric_dtype(df[c]) or (isinstance(cfg.get(c), dict) and
+               (cfg[c].get("alignment") == "right" or cfg[c].get("type_config", {}).get("type") == "number"))
+               for c in cols]
+
+    def longest_word(t):
+        return max((len(w) for w in str(t).split()), default=1)
+
+    need = sum(max([longest_word(h)] + [longest_word(r[i]) for r in rows]) * _CHAR_PX + _CELL_PAD
+               for i, h in enumerate(heads))
+    esc = html.escape
+    if need <= PHONE_WIDTH:
+        th = "".join(f'<th class="{"n" if n else "t"}">{esc(h)}</th>' for h, n in zip(heads, numeric))
+        body = "".join("<tr>" + "".join(f'<td class="{"n" if n else "t"}">{esc(v)}</td>' for v, n in zip(r, numeric))
+                       + "</tr>" for r in rows)
+        return f'<div class="dd-mtable"><table><thead><tr>{th}</tr></thead><tbody>{body}</tbody></table></div>'
+    # cards: the title is "#" (if any) and the first text column; every other column is a label and value
+    rank = cols.index("#") if "#" in cols else None
+    name = next((i for i, n in enumerate(numeric) if not n and i != rank), 0)
+    cards = []
+    for r in rows:
+        title = (f"{r[rank]}. " if rank is not None else "") + (f"{heads[name]} {r[name]}" if numeric[name] else r[name])
+        pairs = "".join(f'<div><span>{esc(h)}</span><b>{esc(v)}</b></div>'
+                        for i, (h, v) in enumerate(zip(heads, r)) if i not in (rank, name))
+        cards.append(f'<div class="dd-mcard"><p>{esc(title)}</p><div class="dd-mpairs">{pairs}</div></div>')
+    return f'<div class="dd-mtable dd-mcards">{"".join(cards)}</div>'
 
 
 # ---- column formats (docs/STYLE.md section 7). Numbers right-aligned, text left-aligned.
@@ -1626,6 +1738,198 @@ def progression_chart(bat, out_ball, bowl, key):
     show(layout(fig, height=320, xtitle="Ball", ytitle="Runs", legend=True), key)
 
 
+# ------------------------------------------------------------------ owner mode: HD image exports
+# Only for the owner: the page must be opened with ?owner=<key> where <key> equals OWNER_KEY in Streamlit
+# secrets (never in the code or the repo). A visitor sees exactly the normal page: every owner step is behind
+# one `if is_owner()`. The key is read once, compared in constant time, remembered for the session and removed
+# from the address bar (so a copied link never carries it). A wrong key turns owner mode off.
+def owner_check(show_seasons=True):
+    """Once per run, from Home.py before the page: owner mode on or off, and per-run export state."""
+    ss = st.session_state
+    given = st.query_params.get("owner")
+    if given is not None:
+        try:
+            want = str(st.secrets.get("OWNER_KEY", ""))
+        except Exception:                      # no secrets file at all (local runs without one)
+            want = ""
+        ss["_owner"] = bool(want) and hmac.compare_digest(str(given).encode(), want.encode())
+        st.query_params.pop("owner", None)
+    if ss.get("_owner"):
+        ss["_x_n"], ss["_x_section"], ss["_x_subject"], ss["_x_credit"] = 0, "", "", ""
+        ss["_x_seasons"] = show_seasons
+
+
+def is_owner():
+    return bool(st.session_state.get("_owner"))
+
+
+def export_subject(text):
+    """The player, team or ground a page is about: printed under the title of its image exports."""
+    if is_owner():
+        st.session_state["_x_subject"] = str(text or "")
+
+
+def export_credit(text):
+    """An extra data credit for this page's image exports (Insights: ESPNcricinfo)."""
+    if is_owner():
+        st.session_state["_x_credit"] = str(text or "")
+
+
+def _export_context(title):
+    ss = st.session_state
+    title = title or ss.get("_x_section") or "Dugout Data"
+    bits = [ss.get("_x_subject", "")]
+    if ss.get("_x_seasons", True) and "season_range" in ss:
+        bits.append(season_label(*ss["season_range"]))
+    bits = [b for b in bits if b]
+    credits = ([ss["_x_credit"]] if ss.get("_x_credit") else []) + ["Data: Cricsheet.org | Analysis by Hammad"]
+    ss["_x_n"] = ss.get("_x_n", 0) + 1
+    name = slug(" ".join([title] + bits)) or "dugout-data"
+    return title, " | ".join(bits), credits, f"dd_png_{ss['_x_n']}", f"dugout-data-{name}.png"
+
+
+def _save_button(make_png, key, file_name):
+    """Owner only: 'Save as image'. The PNG is made only when the button is pressed (no cost before)."""
+    st.download_button("Save as image", data=make_png, file_name=file_name, mime="image/png", key=key,
+                       on_click="ignore", type="tertiary", icon=":material/download:")
+
+
+def _canvas(width_px, height_px):
+    """A matplotlib figure laid out in pixels (y down), white page. Figure, not pyplot: thread safe."""
+    from matplotlib.figure import Figure
+    fig = Figure(figsize=(width_px / 100, height_px / 100), dpi=100, facecolor=PAGE_BG)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_axis_off()
+    ax.set_xlim(0, width_px)
+    ax.set_ylim(height_px, 0)
+    return fig, ax
+
+
+def _pt(px):
+    return px * 0.72                          # matplotlib font size in points for a size in pixels at 100 dpi
+
+
+def _frame(ax, width, height, title, subtitle, credits):
+    """Top band, title and subtitle; at the bottom the credit lines and the site name."""
+    import matplotlib.patches as mp
+    ax.add_patch(mp.Rectangle((0, 0), width, 6, color=HEADER_BG))
+    ax.text(32, 44, title, color=INK, fontsize=_pt(24), fontweight="bold", va="center")
+    if subtitle:
+        ax.text(32, 76, subtitle, color=MUTED, fontsize=_pt(15), va="center")
+    y = height - 22
+    ax.text(width - 32, y, SITE, color=ACCENT, fontsize=_pt(14), fontweight="bold", va="center", ha="right")
+    for line in reversed(credits):
+        ax.text(32, y, line, color=MUTED, fontsize=_pt(13), va="center")
+        y -= 20
+
+
+def _png(fig):
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=300, facecolor=PAGE_BG)      # 3x the 100 dpi layout: HD
+    return buf.getvalue()
+
+
+def table_png(title, subtitle, credits, heads, rows, numeric):
+    """A clean HD PNG of a table: title on top, light theme, header band, zebra rows, numbers right-aligned,
+    long text wrapped; credit and site name at the bottom."""
+    import textwrap
+
+    import matplotlib.patches as mp
+    char, pad, line_h = 7.6, 12, 21                         # 14 px type
+    wrapped = [[textwrap.wrap(str(v), 46) or [""] for v in r] for r in rows]
+    hwrap = [textwrap.wrap(str(h), 18) or [""] for h in heads]
+    widths = []
+    for i, h in enumerate(hwrap):
+        longest = max([len(x) for x in h] + [len(x) for r in wrapped for x in r[i]])
+        widths.append(longest * char + 2 * pad)
+    tw = sum(widths)
+    width = max(800, int(tw + 64))          # 800: the credit and the site name never meet
+    head_h = line_h * max(len(h) for h in hwrap) + 14
+    row_hs = [line_h * max(len(c) for c in r) + 12 for r in wrapped]
+    top = 104 if subtitle else 80
+    height = int(top + head_h + sum(row_hs) + 34 + 20 * len(credits) + 20)
+    fig, ax = _canvas(width, height)
+    _frame(ax, width, height, title, subtitle, credits)
+    x0 = 32
+
+    def cell(x, w, y, lines, num, colour, bold=False):
+        for j, ln in enumerate(lines):
+            ax.text(x + w - pad if num else x + pad, y + 7 + line_h * (j + 0.5), ln, color=colour,
+                    fontsize=_pt(14), fontweight="bold" if bold else "normal", va="center",
+                    ha="right" if num else "left")
+
+    ax.add_patch(mp.Rectangle((x0, top), tw, head_h, facecolor=SURFACE_2, lw=0))
+    x = x0
+    for h, w, num in zip(hwrap, widths, numeric):
+        cell(x, w, top, h, num, MUTED, bold=True)
+        x += w
+    y = top + head_h
+    for k, (r, rh) in enumerate(zip(wrapped, row_hs)):
+        if k % 2:
+            ax.add_patch(mp.Rectangle((x0, y), tw, rh, facecolor=SURFACE, lw=0))
+        ax.plot([x0, x0 + tw], [y, y], color=BORDER, lw=0.8)
+        x = x0
+        for lines, w, num in zip(r, widths, numeric):
+            cell(x, w, y, lines, num, INK)
+            x += w
+        y += rh
+    ax.add_patch(mp.Rectangle((x0, top), tw, y - top, facecolor="none", edgecolor=BORDER, lw=1))
+    return _png(fig)
+
+
+_NUMBER = re.compile(r"[+\-]?[\d,]*\.?\d*%?|-")
+
+
+def cards_png(title, subtitle, credits, items):
+    """HD PNG of stats cards (label, value, short note), four per row, the site's card look."""
+    import matplotlib.patches as mp
+    per, cw, ch, gap = min(4, max(1, len(items))), 250, 128, 16
+    rows_n = -(-len(items) // per)
+    width = max(800, 64 + per * cw + (per - 1) * gap)
+    top = 104 if subtitle else 80
+    height = int(top + rows_n * (ch + gap) + 30 + 20 * len(credits) + 20)
+    fig, ax = _canvas(width, height)
+    _frame(ax, width, height, title, subtitle, credits)
+    for i, (label, value, note_) in enumerate(items):
+        x, y = 32 + (i % per) * (cw + gap), top + (i // per) * (ch + gap)
+        ax.add_patch(mp.FancyBboxPatch((x, y), cw, ch, boxstyle="round,pad=0,rounding_size=10",
+                                       facecolor=SURFACE, edgecolor=BORDER, lw=1))
+        ax.add_patch(mp.Rectangle((x + 8, y), cw - 16, 3, color=ACCENT))
+        ax.text(x + 16, y + 26, str(label).upper(), color=MUTED, fontsize=_pt(12), fontweight="bold", va="center")
+        v = str(value)
+        size = 30 if len(v) <= 12 else max(15, int(30 * 12 / len(v)))
+        ax.text(x + 16, y + 66, v, color=INK, fontsize=_pt(size), fontweight="bold", va="center")
+        if note_:
+            n = str(note_) if len(str(note_)) <= 32 else str(note_)[:31] + "..."
+            ax.text(x + 16, y + 104, n, color=MUTED if _NUMBER.fullmatch(v.strip()) else ACCENT,
+                    fontsize=_pt(13), va="center")
+    return _png(fig)
+
+
+def export_table(df, cfg, fmts, title=None, index=False):
+    """Owner only: the 'Save as image' button under a table."""
+    if index:
+        df = df.reset_index()
+    cols = list(df.columns)
+    heads = [str((cfg.get(c) or {}).get("label") or c) if isinstance(cfg.get(c), dict) else str(c) for c in cols]
+    rows = [[_cell_text(v, fmts.get(c), cfg.get(c)) for c, v in zip(cols, r)] for r in df.itertuples(index=False)]
+    numeric = [pd.api.types.is_numeric_dtype(df[c]) or (isinstance(cfg.get(c), dict) and
+               (cfg[c].get("alignment") == "right" or cfg[c].get("type_config", {}).get("type") == "number"))
+               for c in cols]
+    t, sub, credits, key, fname = _export_context(title)
+    _save_button(lambda: table_png(t, sub, credits, heads, rows, numeric), key, fname)
+
+
+def export_chart_config(fig, key):
+    """Owner only: the site name under the chart, and Plotly's own camera button saving a PNG at 3x (made in
+    the browser, so no kaleido)."""
+    fig.update_layout(title=dict(text=SITE, x=0.99, xanchor="right", y=0, yanchor="bottom", yref="container", pad=dict(b=8),
+                                 font=dict(size=11, color=ACCENT)))
+    fig.update_layout(margin_b=(fig.layout.margin.b or 0) + 30)
+    return {"displayModeBar": True, "displaylogo": False, "modeBarButtons": [["toImage"]],
+            "toImageButtonOptions": {"format": "png", "scale": 3, "filename": f"dugout-data-{slug(key)}"}}
+
+
 # ------------------------------------------------------------------ share card (the only download)
 @st.cache_data(show_spinner="Making the share card", max_entries=100)
 def share_card_png(pid, lo, hi):
@@ -1703,8 +2007,10 @@ def show(fig, key):
     fig.update_layout(dragmode=False)
     fig.update_xaxes(fixedrange=True)
     fig.update_yaxes(fixedrange=True)
-    st.plotly_chart(fig, config={"displayModeBar": False, "scrollZoom": False, "doubleClick": False,
-                                 "showAxisDragHandles": False}, key=key, width="stretch", theme=None)
+    config = {"displayModeBar": False, "scrollZoom": False, "doubleClick": False, "showAxisDragHandles": False}
+    if is_owner():
+        config.update(export_chart_config(fig, key))
+    st.plotly_chart(fig, config=config, key=key, width="stretch", theme=None)
 
 
 def polarity_bars(x, y, hover, ytitle, key, height=300, credit=None):
@@ -1783,3 +2089,9 @@ def compare_table(rows, a_label, b_label, better=None):
             ca, cb = (' class="best"', "") if a_wins else ("", ' class="best"')
         body.append(f"<tr><td>{html.escape(metric)}</td><td{ca}>{html.escape(at)}</td><td{cb}>{html.escape(bt)}</td></tr>")
     st.markdown(f'<table class="dd-compare">{head}{"".join(body)}</table>', unsafe_allow_html=True)
+    if is_owner():                     # owner mode only: "Save as image" (title: the section above)
+        cells = [[m, a, b] for m, a, b, *_ in rows]
+        t, sub, credits, key, fname = _export_context(f"{a_label} v {b_label}: "
+                                                      + (st.session_state.get("_x_section") or "Compare"))
+        _save_button(lambda: table_png(t, sub, credits, ["", a_label, b_label], cells, [False, True, True]),
+                     key, fname)

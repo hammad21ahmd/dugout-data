@@ -41,6 +41,7 @@ c.link_default("team_pick", "team", codes, codes[0])
 team = teams[codes.index(st.selectbox("Franchise", codes, key="team_pick",
                                         format_func=lambda k: f"{teams[codes.index(k)]} ({k})"))]
 c.link_set(team=c.code(team))
+c.export_subject(team)
 labels = [pn[n] for n in sorted(pn)]
 tb = bat[bat["team"] == team].set_index("phase_no").reindex(sorted(pn))
 tw = bowl[bowl["team"] == team].set_index("phase_no").reindex(sorted(pn))
@@ -52,7 +53,7 @@ with t_val:
                           for k, t in (("Batting", tb), ("Bowling", tw)) for n in sorted(pn) if pd.notna(t.loc[n, "per100"])])
     if len(roles):
         best, worst = roles.loc[roles["per100"].idxmax()], roles.loc[roles["per100"].idxmin()]
-        c.cards([("Strongest role", best["Role"], f"{c.raa_fmt(best['raa'])} RAA, {best['per100']:+.2f} per 100 balls"),
+        c.cards(export="Strongest and weakest role", items=[("Strongest role", best["Role"], f"{c.raa_fmt(best['raa'])} RAA, {best['per100']:+.2f} per 100 balls"),
                  ("Weakest role", worst["Role"], f"{c.raa_fmt(worst['raa'])} RAA, {worst['per100']:+.2f} per 100 balls")],
                 lead=True)
 
@@ -94,7 +95,7 @@ with t_form:
     res = c.team_results(team, lo, hi)
     last = res.head(10)
     cur, best = c.streaks(res["Result"].tolist())
-    c.cards([("Last 10", f"{(last['Result'] == 'W').sum()}-{(last['Result'] == 'L').sum()}", "won-lost"),
+    c.cards(export="Form", items=[("Last 10", f"{(last['Result'] == 'W').sum()}-{(last['Result'] == 'L').sum()}", "won-lost"),
              ("Current streak", cur, "W won, L lost, T tie, NR no result"),
              ("Longest winning run", str(best), "in the chosen seasons"),
              ("Matches", f"{len(res):,}", f"{(res['Result'] == 'W').sum()} won")], lead=True)
@@ -114,7 +115,7 @@ with t_h2h:
     if not hs["matches"]:
         c.empty(f"{team} and {opp} did not meet in {c.season_label(lo, hi)}.", " Choose a wider season range.")
     else:
-        c.cards([("Matches", str(hs["matches"]), ""),
+        c.cards(export=f"Head to head v {opp}", items=[("Matches", str(hs["matches"]), ""),
                  (f"{c.code(team)} won", str(hs["a_wins"]), ""), (f"{c.code(opp)} won", str(hs["b_wins"]), ""),
                  ("Tied or no result", str(hs["ties"] + hs["nr"]), f"{hs['ties']} tied, {hs['nr']} no result"),
                  (f"{c.code(team)} runs per innings", c.fmt(c.div(hs["a_runs"], hs["a_inns"]).item()),

@@ -18,8 +18,8 @@ missing = [m for m in info.get("wpa_matches_missing", "").split(",") if m]
 
 c.section("Metrics", "The short version. Every card and column on the site uses these definitions.")
 c.table(pd.DataFrame([("RAA", c.HELP["RAA"]), ("WPA", c.HELP["WPA"]), ("Wins", c.HELP["Wins"]),
-                      ("Strike rate", c.HELP["SR"].split(": ", 1)[1]), ("Economy", c.HELP["Econ"].split(": ", 1)[1]),
-                      ("Average", c.HELP["Avg"].split(": ", 1)[1]), ("Dot ball %", c.HELP["Dot %"].split(": ", 1)[1]),
+                      ("Strike rate", c.HELP["SR"].split(": ", 1)[1].capitalize()), ("Economy", c.HELP["Econ"].split(": ", 1)[1].capitalize()),
+                      ("Average", c.HELP["Avg"].split(": ", 1)[1].capitalize()), ("Dot ball %", c.HELP["Dot %"].split(": ", 1)[1].capitalize()),
                       ("Boundary %", c.HELP["Boundary %"]), ("Balls per dismissal", c.HELP["Balls per dismissal"]),
                       ("Per 100 balls", c.HELP["per 100 balls"])], columns=["Metric", "Meaning"]),
         column_config={"Metric": c.col_text(width="small"), "Meaning": c.col_text(width="large")})
