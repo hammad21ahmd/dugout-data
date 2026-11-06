@@ -35,11 +35,14 @@ bowl = b[b["bowler_id"] == pid]
 dism = b[(b["player_dismissed_id"] == pid) & b["out_any"]]
 
 # ------------------------------------------------------------------ player header
-hand, style, src = p.loc[pid, ["batting_hand", "bowling_style", "source_url"]]
+hand, style, src, hs, ss = p.loc[pid, ["batting_hand", "bowling_style", "source_url", "hand_source", "style_source"]]
 style_bits = [f"{hand}-hand bat" if isinstance(hand, str) else None, style if isinstance(style, str) else None]
 style_txt = " | ".join(x for x in style_bits if x)
-src_txt = (f' <a href="{html.escape(src)}" target="_blank">Source: Wikipedia</a>' if isinstance(src, str) and style_txt
-           else "")
+# Source of each shown value: a Wikipedia link for public-source values, plain text for developer verified
+shown = [s for v, s in ((hand, hs), (style, ss)) if isinstance(v, str)]
+src_bits = ([f'<a href="{html.escape(src)}" target="_blank">Wikipedia</a>']
+            if isinstance(src, str) and any(s != "developer" for s in shown) else [])     + (["Developer verified"] if "developer" in shown else [])
+src_txt = f" Source: {', '.join(src_bits)}" if src_bits and style_txt else ""
 teams = c.teams_latest(mine)
 seasons = sorted(mine["season"].unique())
 st.markdown(f'<p class="dd-lede"><b>{html.escape(c.name(pid))}</b></p>'
@@ -228,7 +231,8 @@ with t_match:
                                "Avg": c.col_1(help=c.HELP["Avg"]),
                                "Balls per wkt": c.col_1(help=c.HELP["Balls per dismissal"]),
                                "Dot %": c.col_pct(help=c.HELP["Dot %"])})
-    c.note("Styles come from Wikipedia and DBpedia only. Unknown means no public source for that player yet.")
+    c.note("Styles come from Wikipedia, DBpedia and Wikidata, or are developer verified. "
+           "Unknown means no source for that player yet.")
     c.section("Best batting partners", "Partnership runs together (extras included), balls faced (no wides).")
     pp = c.player_partners(pid, lo, hi)
     if pp.empty:
@@ -274,7 +278,8 @@ with t_str:
         c.empty(f"Not enough balls for {c.name(pid)} in {c.season_label(lo, hi)}.",
                 " Lower the minimum or widen the seasons.")
     c.note("Strike rate and dot balls use balls faced (bowling: legal balls). Dismissals for batting are outs on "
-           "strike; for bowling, bowler wickets. Styles and batting hands come from Wikipedia and DBpedia.")
+           "strike; for bowling, bowler wickets. Styles and batting hands come from Wikipedia, DBpedia and Wikidata, or are "
+           "developer verified.")
 
 # ------------------------------------------------------------------ match by match
 with t_log:

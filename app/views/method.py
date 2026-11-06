@@ -31,9 +31,10 @@ st.markdown(f"""
   Data export {c.date_fmt(info.get('exported_at_utc', '')[:10])}.
 - **Players** are matched by Cricsheet player ID, never by name, so two players with the same
   name are kept apart.
-- **Batting and bowling styles** come only from Wikipedia and DBpedia (CC BY-SA), each with its
-  source page. They cover about 94% of balls faced and 92% of legal balls; players with no public
-  source show as Unknown.
+- **Batting and bowling styles** come from Wikipedia, DBpedia and Wikidata (CC BY-SA), each with
+  its source page, or are developer verified (checked by hand by the developer, shown as
+  "Developer verified" on the player page). They cover about 98% of balls faced and 98% of
+  legal balls; players with no known source show as Unknown.
 - **Grounds:** different spellings of a ground are joined into one name.
 """)
 
@@ -119,7 +120,7 @@ if c.SHOW_INSIGHTS:
                 f"Credit: {c.INSIGHTS_CREDIT}.")
 
 c.section("Credit")
-st.markdown("Data: Cricsheet.org. Styles: Wikipedia and DBpedia. Analysis by Hammad. "
+st.markdown("Data: Cricsheet.org. Styles: Wikipedia, DBpedia, Wikidata and developer verified. Analysis by Hammad. "
             "No team logos or player photos are used.")
 
 with st.expander(f"Matches without WPA ({len(missing)})"):

@@ -92,7 +92,7 @@ if len(bowl_a) or len(bowl_b):
                       wa["econ"].get(n, np.nan), wb["econ"].get(n, np.nan), False) for n in sorted(pn)], na, nb)
 
 # ------------------------------------------------------------------ matchups by bowling type
-c.section("Batting against each bowling type", "Strike rate; balls faced in brackets. Styles from Wikipedia and DBpedia.")
+c.section("Batting against each bowling type", "Strike rate; balls faced in brackets. Styles from Wikipedia, DBpedia, Wikidata or developer verified.")
 ta, tb = c.bat_stats(bat_a, "bowl_style").set_index("bowl_style"), c.bat_stats(bat_b, "bowl_style").set_index("bowl_style")
 types = [s for s in c.STYLE_ORDER if s in ta.index or s in tb.index]
 if types:

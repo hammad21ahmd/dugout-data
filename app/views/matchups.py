@@ -151,6 +151,7 @@ if view == "hand":
                                "Runs": c.col_int(), "Wkts": c.col_int(), "Econ": c.col_2(help=c.HELP["Econ"]),
                                "Avg": c.col_1(help=c.HELP["Avg"]), "Balls per wkt": c.col_1(help=c.HELP["Balls per dismissal"]),
                                "Dot %": c.col_pct(help=c.HELP["Dot %"])})
-    c.note("Batting hand from Wikipedia and DBpedia; balls to batters with no public hand are left out.")
+    c.note("Batting hand from Wikipedia, DBpedia and Wikidata, or developer verified; "
+           "balls to batters with no known hand are left out.")
 
 c.footer()

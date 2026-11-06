@@ -10,7 +10,8 @@ Data rules (CLAUDE.md): innings 1 and 2 only; phase = over_no + 1 mapped to this
 balls in delivery_no order; ball faced excludes wides; legal ball excludes wides and
 no-balls; runs conceded include wides and no-ball extras, not byes or leg-byes (no-ball
 with byes: 1 run to the bowler); bowler wickets are bowled, caught, lbw, stumped,
-caught and bowled, hit wicket. Styles come only from public_style (Wikipedia/DBpedia).
+caught and bowled, hit wicket. Styles come only from public_style (Wikipedia/DBpedia/Wikidata,
+or developer verified).
 """
 
 import hmac
@@ -462,7 +463,8 @@ def footer(copyright=False, extra=""):
     # Credit line, then the details on their own lines (separate blocks, so they never run together).
     lines = ([html.escape(extra)] if extra else []) + ([html.escape(COPYRIGHT)] if copyright else []) + [
         f'Data export {html.escape(date_fmt(info.get("exported_at_utc", "")[:10]))}. Cricsheet data is shared '
-        f'under the ODC-BY licence; batting and bowling styles come from Wikipedia and DBpedia (CC BY-SA).']
+        f'under the ODC-BY licence; batting and bowling styles come from Wikipedia, DBpedia and Wikidata (CC BY-SA) or are '
+        f'developer verified.']
     st.markdown(f'<div class="dd-footer"><div class="dd-footer-credit">{FOOTER}</div>'
                 + "".join(f'<div class="dd-footer-small">{x}</div>' for x in lines) + '</div>',
                 unsafe_allow_html=True)
@@ -769,8 +771,8 @@ def export_info():
 
 @st.cache_data(show_spinner=False)
 def players():
-    p = query("SELECT p.player_id, p.display_name, p.short_name, s.batting_hand, s.bowling_style, s.source_url "
-              "FROM players p LEFT JOIN public_style s USING (player_id)")
+    p = query("SELECT p.player_id, p.display_name, p.short_name, s.batting_hand, s.bowling_style, s.source_url, "
+              "s.hand_source, s.style_source FROM players p LEFT JOIN public_style s USING (player_id)")
     return p.set_index("player_id")
 
 
