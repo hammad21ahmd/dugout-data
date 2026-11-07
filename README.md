@@ -1,7 +1,8 @@
 # Dugout Data
 
 Pakistan Super League analytics from every ball since 2016: records and leaderboards, player
-value (runs above average and win probability added), player pages with strengths and
+value (RAA, Wicket Value and Total against the average men's T20 player in the same match
+situation, and win probability added), player pages with strengths and
 weaknesses and match-by-match logs, matchups, team and venue pages.
 
 Analysis by Hammad.

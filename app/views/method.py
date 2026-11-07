@@ -17,7 +17,8 @@ info = c.export_info()
 missing = [m for m in info.get("wpa_matches_missing", "").split(",") if m]
 
 c.section("Metrics", "The short version. Every card and column on the site uses these definitions.")
-c.table(pd.DataFrame([("RAA", c.HELP["RAA"]), ("WPA", c.HELP["WPA"]), ("Wins", c.HELP["Wins"]),
+c.table(pd.DataFrame([("RAA", c.HELP["RAA"]), ("Wicket Value", c.HELP["Wicket Value"]), ("Total", c.HELP["Total"]),
+                      ("WPA", c.HELP["WPA"]),
                       ("Strike rate", c.HELP["SR"].split(": ", 1)[1].capitalize()), ("Economy", c.HELP["Econ"].split(": ", 1)[1].capitalize()),
                       ("Average", c.HELP["Avg"].split(": ", 1)[1].capitalize()), ("Dot ball %", c.HELP["Dot %"].split(": ", 1)[1].capitalize()),
                       ("Boundary %", c.HELP["Boundary %"]), ("Balls per dismissal", c.HELP["Balls per dismissal"]),
@@ -51,22 +52,39 @@ st.markdown("""
 - Overs are written over.ball: 10.4 is the 4th legal ball of the 11th over.
 """)
 
-c.section("RAA: runs above average")
-st.markdown("""
-For each season and phase (Powerplay, Middle, Death), the average men's T20 player sets the
-standard: runs per ball and outs per ball across all men's T20 matches in Cricsheet that season.
+c.section("RAA, Wicket Value and Total")
+v_matches, v_balls = int(info.get("value_baseline_matches", 0)), int(info.get("value_baseline_balls", 0))
+st.markdown(f"""
+The standard is the average men's T20 player worldwide from 2016 to 2026: every men's T20 match in
+Cricsheet in those seasons ({v_matches:,} matches, {v_balls:,} balls, international and league), innings 1
+and 2. Every ball is put in its **match situation**: the over (1 to 20) and the wickets the batting side has
+lost (0 to 9). That makes 200 situations, and for each one the baseline gives:
 
-- **Batting RAA** = (runs scored minus the runs an average batter scores from the same balls)
-  plus (outs an average batter would lose from those balls minus actual outs) times that season's
-  runs per wicket. A batter who scores at the average rate and gets out at the average rate has
-  RAA 0.
-- **Bowling RAA** = (runs an average bowler concedes from the same legal balls minus runs
-  conceded) plus (wickets minus the wickets an average bowler takes) times that season's runs
-  per wicket.
-- **Wins** = RAA divided by ten times that season's runs per wicket (about 240 to 270 runs per
-  win).
-- RAA bowling runs count every bye on a no-ball against the bowler, so in 7 seasons they are 2 to
-  11 runs higher in total than the runs conceded shown elsewhere on this site.
+- the runs off the bat per ball faced, and the chance the striker is out (batting);
+- the runs conceded per legal ball, and the chance of a bowler wicket (bowling);
+- the runs the batting side still scores from that point to the end of the innings, on average.
+
+**Batting**
+- **RAA** = runs scored minus the runs an average batter scores from the same balls in the same situations.
+- **Wicket Value** = (outs an average batter would lose from those balls minus actual outs) times the value of a
+  wicket in each situation. A wicket's value is the drop in the runs still to come: the average for that over and
+  wickets down, minus the average with one more wicket down. Early in an innings, with wickets in hand, a
+  wicket costs a few runs; with the tail in, it can cost many more.
+
+**Bowling**
+- **RAA** = the runs an average bowler concedes from the same legal balls in the same situations, minus runs
+  conceded. Fewer runs conceded gives a higher RAA.
+- **Wicket Value** = (wickets taken minus the wickets an average bowler takes from those balls) times the value
+  of a wicket in each situation.
+
+**Total** = RAA + Wicket Value, both in runs. A player at the average rate in every situation has Total 0.
+Across all {v_balls:,} baseline balls each part adds up to about 0.
+
+Small samples: a situation with fewer than 200 balls (for example the first over with four wickets down) is
+joined with the nearest wicket counts of the same over, then the nearest overs. The runs still to come in such a
+situation come from a ball-by-ball chain built from the same data (runs and wicket chance per ball, six balls an
+over, to the end of the innings). A wicket never adds expected runs: the runs still to come never rise with one
+more wicket down.
 """)
 
 c.section("WPA: win probability added")
@@ -104,18 +122,25 @@ st.markdown(f"""
   chosen seasons, with the same counting rules as above.
 - A row needs at least {c.VT_MIN_BAT} balls faced (batting) or {c.VT_MIN_BOWL} legal balls (bowling); "Show all"
   lists every row. The note under each table gives the sample: rows and balls shown out of the total.
-- Batting average counts every dismissal, like the career average. RAA is the same batting RAA as elsewhere,
-  split by the balls faced at that ground or against that team, so the rows add up to the player's batting RAA.
+- Batting average counts every dismissal, like the career average. RAA, Wicket Value and Total are the same as
+  elsewhere, added up over the balls at that ground or against that team, so the rows add up to the player's
+  totals.
 """)
 
 c.section("Limits")
 st.markdown("""
-- RAA and WPA say how much value a player added, not why. They do not adjust for the ground,
-  the opposition, or the batting position yet (planned for Phase 2).
-- Batting RAA values each out avoided at a full season's runs per wicket (about 24 runs). In
-  T20 a wicket usually costs less than that, so this version of RAA rewards batters who rarely
-  get out more than fast scorers. Phase 2 replaces it with a run-expectancy model that prices a
-  wicket by the runs it actually costs at that point of the innings.
+- RAA, Wicket Value, Total and WPA say how much value a player added, not why. They do not adjust for the
+  ground, the opposition or the batting position.
+- The value of a wicket comes from first innings only: a chase stops once the target is reached, so second
+  innings would understate the runs still to come.
+- Super overs are left out. Innings shortened by rain are not separated, so they pull the runs still to come
+  (and the value of a wicket) slightly down.
+- The baseline is the same for every season. PSL scoring rose after 2023 (about 1.42 runs per ball faced from
+  2023 to 2026 against 1.22 from 2016 to 2018), so batters of recent seasons get higher RAA and bowlers of
+  recent seasons lower. To compare players fairly, compare them within one season with the season control at
+  the top of every page.
+- The baseline is every men's T20 match, so PSL players together are above or below zero (PSL batters
+  score faster than the average men's T20 batter).
 - Cricsheet has 23 of the 24 matches of PSL 2016 (one match is missing), so totals that include
   2016 (runs, wickets, catches and the records on Home) can be slightly below official PSL records.
 - Cricsheet lists two PSL matches as not available: Peshawar Zalmi vs Karachi Kings (11 Feb 2016)
@@ -132,7 +157,8 @@ if c.SHOW_INSIGHTS:
                 f"Credit: {c.INSIGHTS_CREDIT}.")
 
 c.section("Credit")
-st.markdown("Data: Cricsheet.org. Styles: Wikipedia, DBpedia, Wikidata and developer verified. Analysis by Hammad. "
+st.markdown("Data: Cricsheet.org (ball by ball for PSL and for the men's T20 baseline). Styles: Wikipedia, DBpedia, "
+            "Wikidata and developer verified. Analysis by Hammad. "
             "No team logos or player photos are used.")
 
 with st.expander(f"Matches without WPA ({len(missing)})"):

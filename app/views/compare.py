@@ -46,9 +46,13 @@ def row(metric, key, text, higher=True):
     return (metric, text(va), text(vb), va, vb, higher)
 
 
-c.section("Value", c.HELP["RAA"])
-c.compare_table([row("Batting RAA", "bat_raa", c.raa_fmt), row("Batting WPA", "bat_wpa", lambda v: c.fmt(v, 2, True)),
-                 row("Bowling RAA", "bowl_raa", c.raa_fmt), row("Bowling WPA", "bowl_wpa", lambda v: c.fmt(v, 2, True))],
+c.section("Value", c.VALUE_NOTE)
+c.compare_table([row("Batting Total", "bat_total", c.raa_fmt), row("Batting RAA", "bat_raa", c.raa_fmt),
+                 row("Batting Wicket Value", "bat_wv", c.raa_fmt),
+                 row("Batting WPA", "bat_wpa", lambda v: c.fmt(v, 2, True)),
+                 row("Bowling Total", "bowl_total", c.raa_fmt), row("Bowling RAA", "bowl_raa", c.raa_fmt),
+                 row("Bowling Wicket Value", "bowl_wv", c.raa_fmt),
+                 row("Bowling WPA", "bowl_wpa", lambda v: c.fmt(v, 2, True))],
                 na, nb)
 
 c.section("Career")
@@ -64,12 +68,12 @@ c.note("Highlighted: the better of the two where more (or, for economy and bowli
 pt = c.in_seasons(c.player_teams(), lo, hi)
 seasons = sorted(set(pt.loc[pt["player_id"].isin([a, b]), "season"]))
 if seasons:
-    def season_raa(pid):
-        tot = pd.concat([c.in_seasons(c.value(t), lo, hi) for t in ("raa_bat", "raa_bowl")])
-        return tot[tot["player_id"] == pid].groupby("season")["raa"].sum().reindex(seasons).fillna(0).values
+    def season_total(pid):
+        tot = pd.concat([c.in_seasons(c.value(t), lo, hi) for t in ("value_bat", "value_bowl")])
+        return tot[tot["player_id"] == pid].groupby("season")["total"].sum().reindex(seasons).fillna(0).values
 
-    c.section("Value by season", "Total RAA (batting plus bowling) per season.")
-    c.grouped_bars([str(s) for s in seasons], [(na, season_raa(a)), (nb, season_raa(b))], "Total RAA (runs)",
+    c.section("Value by season", "Total (batting plus bowling) per season.")
+    c.grouped_bars([str(s) for s in seasons], [(na, season_total(a)), (nb, season_total(b))], "Total (runs)",
                    key="cmp_seasons", height=300)
 
 # ------------------------------------------------------------------ phases

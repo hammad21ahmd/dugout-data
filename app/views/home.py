@@ -1,6 +1,7 @@
 """
 home.py - Dugout Data home: PSL records (most runs, wickets, catches, best economy and strike
-rate) and the RAA and WPA leaderboards as tabs in one row; biggest movers; links.
+rate), the player value (RAA, Wicket Value, Total) and WPA leaderboards as tabs in one row; biggest
+movers; links.
 READ-ONLY: reads data/psl.sqlite only.
 """
 
@@ -19,13 +20,13 @@ KIND = "one" if lo == hi else "many"
 
 # ------------------------------------------------------------------ at a glance
 m = c.in_seasons(c.matches(), lo, hi)
-rb, rw = c.in_seasons(c.value("raa_bat"), lo, hi), c.in_seasons(c.value("raa_bowl"), lo, hi)
-tot_raa = pd.concat([rb[["player_id", "raa"]], rw[["player_id", "raa"]]]).groupby("player_id")["raa"].sum()
-top = tot_raa.idxmax() if len(tot_raa) else None
+rb, rw = c.in_seasons(c.value("value_bat"), lo, hi), c.in_seasons(c.value("value_bowl"), lo, hi)
+tot_val = pd.concat([rb[["player_id", "total"]], rw[["player_id", "total"]]]).groupby("player_id")["total"].sum()
+top = tot_val.idxmax() if len(tot_val) else None
 c.cards([("Matches", f"{len(m):,}", ""),
          ("Players", f"{len(set(rb['player_id']) | set(rw['player_id'])):,}", ""),
          ("Balls", f"{int(rb['balls'].sum()):,}", ""),
-         ("Top value", c.name(top) if top else "-", f"{c.raa_fmt(tot_raa.max())} RAA" if top else "")], lead=True)
+         ("Top value", c.name(top) if top else "-", f"{c.raa_fmt(tot_val.max())} Total" if top else "")], lead=True)
 
 # ------------------------------------------------------------------ records and leaderboards (one row of tabs)
 bat, bowl, catches, unresolved = c.record_tables(lo, hi)
@@ -61,33 +62,38 @@ def ranked(df, n):
     return df
 
 
-def leaderboard(table, metric, min_balls):
+VALUE_SORT = {"Total": "total", "RAA": "raa", "Wicket Value": "wv"}
+
+
+def leaderboard(table, metric, min_balls, sort="total"):
+    """Top 15 of a value or WPA table in the chosen seasons, players with at least min_balls (balls faced,
+    or legal balls bowled). Value tables: RAA, Wicket Value and Total, ranked by `sort` (Total by default)."""
     v = c.in_seasons(c.value(table), lo, hi)
-    agg = {"balls": ("balls", "sum"), "runs": ("runs", "sum"), metric: (metric, "sum")}
-    if table == "raa_bat":
-        agg["outs"] = ("outs", "sum")
-    if table == "raa_bowl":
+    value = table.startswith("value")
+    sums = ["raa", "wv", "total"] if value else [metric]
+    agg = {"balls": ("balls", "sum"), "runs": ("runs", "sum"), **{m: (m, "sum") for m in sums}}
+    if table.endswith("bowl"):
         agg["wkts"] = ("wkts", "sum")
-    if table.startswith("raa"):
-        agg["wins"] = ("wins", "sum")
     g = v.groupby("player_id").agg(**agg).reset_index()
     g["teams"] = g["player_id"].map(c.codes_by_player(table, lo, hi))
     g = g[g["balls"] >= min_balls]
     g["Player"] = g["player_id"].map(c.name)
-    g["per 100 balls"] = c.div(g[metric], g["balls"], 100)
-    if "bowl" in table:
+    if table.endswith("bowl"):
         g["Econ"] = c.div(g["runs"], g["balls"], 6)
     else:
         g["SR"] = c.div(g["runs"], g["balls"], 100)
-    g = g.sort_values(metric, ascending=False).head(15).reset_index(drop=True)
+    if not value:
+        g["per 100 balls"] = c.div(g[metric], g["balls"], 100)
+    key = sort if value else metric
+    g = g.sort_values([key, "balls"], ascending=[False, False]).head(15).reset_index(drop=True)
     g.insert(0, "#", g.index + 1)
     cols = ["#", "Player", "teams", "balls", "runs"] + (["wkts"] if "wkts" in g else []) + \
-           (["Econ"] if "Econ" in g else ["SR"]) + [metric, "per 100 balls"] + (["wins"] if "wins" in g else [])
+           (["Econ"] if "Econ" in g else ["SR"]) + (["raa", "wv", "total"] if value else [metric, "per 100 balls"])
     return g[cols].rename(columns={"teams": "Team", "balls": "Balls", "runs": "Runs", "wkts": "Wkts",
-                                   metric: metric.upper(), "wins": "Wins"})
+                                   "raa": "RAA", "wv": "Wicket Value", "total": "Total", "wpa": "WPA"})
 
 
-VALUE_TABS = {"Batting RAA": ("raa_bat", "raa"), "Bowling RAA": ("raa_bowl", "raa"),
+VALUE_TABS = {"Batting value": ("value_bat", "total"), "Bowling value": ("value_bowl", "total"),
               "Batting WPA": ("wpa_bat", "wpa"), "Bowling WPA": ("wpa_bowl", "wpa")}
 c.section("Records and leaderboards")
 tabs = st.tabs(["Most runs", "Most wickets", "Most catches", "Best economy", "Best strike rate"] + list(VALUE_TABS)
@@ -140,20 +146,28 @@ with tabs[4]:
 for tab, (label, (table, metric)) in zip(tabs[5:9], VALUE_TABS.items()):
     with tab:
         mb = st.slider("Minimum balls", 0, 600, 120, 30, key=f"min_{table}",
-                       help="Balls faced for batting, balls bowled for bowling, in the chosen seasons.")
-        t = leaderboard(table, metric, mb)
+                       help="Balls faced for batting, legal balls bowled for bowling, in the chosen seasons.")
+        value = table.startswith("value")
+        sort = "total"
+        if value:      # on a phone the table is plain text, so the ranking column is chosen here (desktop: also by header)
+            sort = VALUE_SORT[st.radio("Rank by", list(VALUE_SORT), horizontal=True, key=f"sort_{table}")]
+        t = leaderboard(table, metric, mb, sort)
         if t.empty:
             c.empty("No player has that many balls in these seasons.", " Lower the minimum or widen the seasons.")
             continue
         c.table(t, title=label, column_config={
             "#": st.column_config.NumberColumn(format="%d", width=40), "Player": c.col_text(),
-            "Team": c.col_teams(), "Balls": c.col_int(), "Runs": c.col_int(), "Wkts": c.col_int(),
-            "SR": c.col_1(help=c.HELP["SR"]), "Econ": c.col_2(help=c.HELP["Econ"]),
-            "RAA": c.col_raa(), "WPA": c.col_wpa(),
-            "per 100 balls": c.col_raa(help=c.HELP["per 100 balls"]) if metric == "raa" else
-            c.col_wpa(help=c.HELP["per 100 balls"]),
-            "Wins": c.col_wpa(help=c.HELP["Wins"])})
-        c.note(c.HELP["RAA"] if metric == "raa" else c.HELP["WPA"] + " WPA is missing for 18 matches (see Method).")
+            "Team": c.col_teams(), "Balls": c.col_int(help="Balls faced" if table.endswith("bat") else "Legal balls bowled"),
+            "Runs": c.col_int(help="Runs off the bat" if table.endswith("bat") else "Runs conceded"),
+            "Wkts": c.col_int(), "SR": c.col_1(help=c.HELP["SR"]), "Econ": c.col_2(help=c.HELP["Econ"]),
+            "RAA": c.col_raa(help=c.HELP["RAA"]), "Wicket Value": c.col_raa(help=c.HELP["Wicket Value"]),
+            "Total": c.col_raa(help=c.HELP["Total"]), "WPA": c.col_wpa(),
+            "per 100 balls": c.col_wpa(help=c.HELP["per 100 balls"])})
+        if value:
+            for line in c.VALUE_NOTES["bat" if table.endswith("bat") else "bowl"]:
+                c.note(line)
+        else:
+            c.note(c.HELP["WPA"] + " WPA is missing for 18 matches (see Method).")
 
 with tabs[9]:
     min_bd = st.slider("Minimum balls faced", 0, 1500, MIN_BALLS, 10, key=f"rec_min_bdry_{KIND}",
@@ -196,26 +210,27 @@ c.note("Cricsheet has 23 of the 24 matches of PSL 2016, so totals that include 2
 
 # ------------------------------------------------------------------ biggest movers
 prev = hi - 1
-c.section("Biggest movers", f"Total RAA (batting plus bowling) in {hi} against {prev}. Players need 60 balls "
+c.section("Biggest movers", f"Total (batting plus bowling) in {hi} against {prev}. Players need 60 balls "
                             "(faced plus bowled) in both seasons." if prev >= 2016 else "")
 if prev < 2016:
     c.empty("Movers compare a season with the one before.", " Choose a range ending in 2017 or later.")
 else:
-    tot = pd.concat([c.value("raa_bat")[["season", "player_id", "raa", "balls"]],
-                     c.value("raa_bowl")[["season", "player_id", "raa", "balls"]]])
-    s = tot[tot["season"].isin([prev, hi])].groupby(["player_id", "season"]).agg(raa=("raa", "sum"), balls=("balls", "sum")).unstack()
+    tot = pd.concat([c.value("value_bat")[["season", "player_id", "total", "balls"]],
+                     c.value("value_bowl")[["season", "player_id", "total", "balls"]]])
+    s = tot[tot["season"].isin([prev, hi])].groupby(["player_id", "season"]).agg(
+        total=("total", "sum"), balls=("balls", "sum")).unstack()
     s = s.dropna()
     s = s[(s[("balls", prev)] >= 60) & (s[("balls", hi)] >= 60)]
-    move = pd.DataFrame({"Player": s.index.map(c.name), f"RAA {prev}": s[("raa", prev)].values,
-                         f"RAA {hi}": s[("raa", hi)].values})
-    move["Change"] = move[f"RAA {hi}"] - move[f"RAA {prev}"]
-    cfg = {"Player": c.col_text(), **{k: c.col_raa() for k in move.columns if k != "Player"}}
+    move = pd.DataFrame({"Player": s.index.map(c.name), f"Total {prev}": s[("total", prev)].values,
+                         f"Total {hi}": s[("total", hi)].values})
+    move["Change"] = move[f"Total {hi}"] - move[f"Total {prev}"]
+    cfg = {"Player": c.col_text(), **{k: c.col_raa(help=c.HELP["Total"]) for k in move.columns if k != "Player"}}
     a, b = st.tabs(["Up most", "Down most"])
     with a:
         c.table(move.sort_values("Change", ascending=False).head(8), column_config=cfg, title="Biggest movers up")
     with b:
         c.table(move.sort_values("Change").head(8), column_config=cfg, title="Biggest movers down")
-    c.note(c.HELP["RAA"] + " Change = RAA " + str(hi) + " minus RAA " + str(prev) + ".")
+    c.note(c.HELP["Total"] + " Change = Total " + str(hi) + " minus Total " + str(prev) + ".")
 
 # ------------------------------------------------------------------ explore
 c.section("Explore")

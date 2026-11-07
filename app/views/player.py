@@ -56,8 +56,8 @@ if mine.empty:
     c.footer()
     st.stop()
 
-raa_b = c.in_seasons(c.value("raa_bat"), lo, hi)
-raa_w = c.in_seasons(c.value("raa_bowl"), lo, hi)
+raa_b = c.in_seasons(c.value("value_bat"), lo, hi)
+raa_w = c.in_seasons(c.value("value_bowl"), lo, hi)
 wpa_b = c.in_seasons(c.value("wpa_bat"), lo, hi)
 wpa_w = c.in_seasons(c.value("wpa_bowl"), lo, hi)
 my = {k: t[t["player_id"] == pid] for k, t in
@@ -80,7 +80,8 @@ S = c.player_summary(pid, lo, hi)
 with t_over:
     if S["bat"]:
         c.section("Batting")
-        c.cards(export="Batting", items=[("Batting RAA", c.raa_fmt(S["bat_raa"]), ""),
+        c.cards(export="Batting", items=[("Batting Total", c.raa_fmt(S["bat_total"]),
+                                          f"RAA {c.raa_fmt(S['bat_raa'])}, Wicket Value {c.raa_fmt(S['bat_wv'])}"),
                  ("Batting WPA", c.fmt(S["bat_wpa"], 2, True), ""),
                  ("Runs", c.num_fmt(S["runs"]), f"{S['balls']:,} balls"),
                  ("Innings", c.num_fmt(S["innings"]), ""),
@@ -102,14 +103,15 @@ with t_over:
                     f'({int(f["mat"])} matches).</p>', unsafe_allow_html=True)
     if S["bowl"]:
         c.section("Bowling")
-        c.cards(export="Bowling", items=[("Bowling RAA", c.raa_fmt(S["bowl_raa"]), ""),
+        c.cards(export="Bowling", items=[("Bowling Total", c.raa_fmt(S["bowl_total"]),
+                                          f"RAA {c.raa_fmt(S['bowl_raa'])}, Wicket Value {c.raa_fmt(S['bowl_wv'])}"),
                  ("Bowling WPA", c.fmt(S["bowl_wpa"], 2, True), ""),
                  ("Wickets", c.num_fmt(S["wkts"]), f"{S['conceded']:,} runs conceded"),
                  ("Overs", c.overs(S["legal"]), f"{S['bowl_matches']} matches"),
                  ("Economy", c.fmt(S["econ"], 2), ""),
                  ("Average", c.fmt(S["bowl_avg"]), ""),
                  ("Dot ball %", c.pct(S["bowl_dot"]), "")], lead=True, detail=True)
-    c.note(c.HELP["RAA"] + " " + c.HELP["WPA"])
+    c.note(c.VALUE_NOTE + " " + c.HELP["WPA"])
 
     # The only download on the site: a branded image with "Dugout Data" and "Data: Cricsheet.org".
     c.section("Share", "A 1080 x 1350 image of these numbers, for social posts.")
@@ -130,29 +132,30 @@ for s in seasons:
         "Season": s, "Team": ", ".join(c.code(x) for x in sorted(mine.loc[mine["season"] == s, "team"].unique())),
         "Matches": mine.loc[mine["season"] == s, "match_id"].nunique(),
         "Runs": sb["runs"].get(s, 0) if len(sb) else 0, "SR": sb["sr"].get(s, np.nan) if len(sb) else np.nan,
-        "Bat RAA": my["raa_b"].loc[my["raa_b"]["season"] == s, "raa"].sum(),
+        "Bat Total": my["raa_b"].loc[my["raa_b"]["season"] == s, "total"].sum(),
         "Bat WPA": my["wpa_b"].loc[my["wpa_b"]["season"] == s, "wpa"].sum(),
         "Wkts": sw["wkts"].get(s, 0) if len(sw) else 0, "Econ": sw["econ"].get(s, np.nan) if len(sw) else np.nan,
-        "Bowl RAA": my["raa_w"].loc[my["raa_w"]["season"] == s, "raa"].sum(),
+        "Bowl Total": my["raa_w"].loc[my["raa_w"]["season"] == s, "total"].sum(),
         "Bowl WPA": my["wpa_w"].loc[my["wpa_w"]["season"] == s, "wpa"].sum()})
 seas = pd.DataFrame(rows)
-seas["Total RAA"] = seas["Bat RAA"] + seas["Bowl RAA"]
+seas["Total"] = seas["Bat Total"] + seas["Bowl Total"]
 with t_over:
-    c.section("Value by season", "Total RAA (batting plus bowling). Blue: above an average T20 player that season; "
-                                 "red: below.")
-    c.polarity_bars([str(s) for s in seas["Season"]], seas["Total RAA"],
+    c.section("Value by season", "Total (batting plus bowling). Blue: above the average men's T20 player in the "
+                                 "same situations; red: below.")
+    c.polarity_bars([str(s) for s in seas["Season"]], seas["Total"],
                     [f"{s}: {v:+.1f} runs (bat {a:+.1f}, bowl {w:+.1f})" for s, v, a, w in
-                     zip(seas["Season"], seas["Total RAA"], seas["Bat RAA"], seas["Bowl RAA"])],
-                    "Total RAA (runs)", key="seasons_chart", height=260)
+                     zip(seas["Season"], seas["Total"], seas["Bat Total"], seas["Bowl Total"])],
+                    "Total (runs)", key="seasons_chart", height=260)
 with t_seas:
     c.section("Season by season")
     c.table(seas, column_config={
         "Season": st.column_config.NumberColumn(format="%d", width="small"), "Team": c.col_teams(),
         "Matches": c.col_int(), "Runs": c.col_int(), "SR": c.col_1(help=c.HELP["SR"]),
         "Wkts": c.col_int(), "Econ": c.col_2(help=c.HELP["Econ"]),
-        "Bat RAA": c.col_raa(), "Bowl RAA": c.col_raa(), "Total RAA": c.col_raa(),
+        "Bat Total": c.col_raa(help=c.HELP["Total"]), "Bowl Total": c.col_raa(help=c.HELP["Total"]),
+        "Total": c.col_raa(help="Batting Total plus bowling Total, in runs"),
         "Bat WPA": c.col_wpa(), "Bowl WPA": c.col_wpa()})
-    c.note(c.HELP["RAA"] + " " + c.HELP["WPA"])
+    c.note(c.VALUE_NOTE + " " + c.HELP["WPA"])
 
 # ------------------------------------------------------------------ phases
 with t_phase:
@@ -161,17 +164,19 @@ with t_phase:
         c.empty("Did not bat in these seasons.")
     else:
         t = c.bat_stats(bat, "phase_no")
-        r = my["raa_b"].groupby("phase_no")["raa"].sum()
-        t["RAA"] = t["phase_no"].map(r).fillna(0)
-        t["RAA per 100"] = c.div(t["RAA"], t["balls"], 100)
+        r = my["raa_b"].groupby("phase_no")[["raa", "wv", "total"]].sum()
+        t["RAA"] = t["phase_no"].map(r["raa"]).fillna(0)
+        t["Wicket Value"] = t["phase_no"].map(r["wv"]).fillna(0)
+        t["Total"] = t["phase_no"].map(r["total"]).fillna(0)
         t["Phase"] = t["phase_no"].map(pn)
-        c.table(t[["Phase", "balls", "runs", "outs", "sr", "dot_pct", "bdry_pct", "RAA", "RAA per 100"]]
+        c.table(t[["Phase", "balls", "runs", "outs", "sr", "dot_pct", "bdry_pct", "RAA", "Wicket Value", "Total"]]
                 .rename(columns={"balls": "Balls", "runs": "Runs", "outs": "Outs", "sr": "SR",
                                  "dot_pct": "Dot %", "bdry_pct": "Boundary %"}),
                 column_config={"Phase": c.col_text(), "Balls": c.col_int(), "Runs": c.col_int(),
                                "Outs": c.col_int(help="Dismissals on strike"), "SR": c.col_1(help=c.HELP["SR"]),
                                "Dot %": c.col_pct(help=c.HELP["Dot %"]), "Boundary %": c.col_pct(help=c.HELP["Boundary %"]),
-                               "RAA": c.col_raa(), "RAA per 100": c.col_raa(help=c.HELP["per 100 balls"])})
+                               "RAA": c.col_raa(help=c.HELP["RAA"]), "Wicket Value": c.col_raa(help=c.HELP["Wicket Value"]),
+                               "Total": c.col_raa(help=c.HELP["Total"])})
     c.section("Batting by position", "Position in the batting order: the order in which batters first came to "
                                      "the crease in that innings.")
     pt = c.position_stats(pid, lo, hi)
@@ -187,19 +192,21 @@ with t_phase:
         c.empty("Did not bowl in these seasons.")
     else:
         t = c.bowl_stats(bowl, "phase_no")
-        r = my["raa_w"].groupby("phase_no")["raa"].sum()
-        t["RAA"] = t["phase_no"].map(r).fillna(0)
-        t["RAA per 100"] = c.div(t["RAA"], t["balls"], 100)
+        r = my["raa_w"].groupby("phase_no")[["raa", "wv", "total"]].sum()
+        t["RAA"] = t["phase_no"].map(r["raa"]).fillna(0)
+        t["Wicket Value"] = t["phase_no"].map(r["wv"]).fillna(0)
+        t["Total"] = t["phase_no"].map(r["total"]).fillna(0)
         t["Phase"] = t["phase_no"].map(pn)
         t["Overs"] = t["balls"].map(c.overs_num)
-        c.table(t[["Phase", "Overs", "runs", "wkts", "econ", "dot_pct", "RAA", "RAA per 100"]]
+        c.table(t[["Phase", "Overs", "runs", "wkts", "econ", "dot_pct", "RAA", "Wicket Value", "Total"]]
                 .rename(columns={"runs": "Runs", "wkts": "Wkts", "econ": "Econ", "dot_pct": "Dot %"}),
                 column_config={"Phase": c.col_text(), "Overs": c.col_1(help="Overs bowled (3.2 = 3 overs 2 balls)"),
                                "Runs": c.col_int(), "Wkts": c.col_int(), "Econ": c.col_2(help=c.HELP["Econ"]),
-                               "Dot %": c.col_pct(help=c.HELP["Dot %"]), "RAA": c.col_raa(),
-                               "RAA per 100": c.col_raa(help=c.HELP["per 100 balls"])})
-    c.note(c.HELP["RAA"] + " RAA per 100: the same per 100 balls. Batting outs here count dismissals on strike; "
-           "the career average also counts run-outs at the non-striker's end.")
+                               "Dot %": c.col_pct(help=c.HELP["Dot %"]), "RAA": c.col_raa(help=c.HELP["RAA"]),
+                               "Wicket Value": c.col_raa(help=c.HELP["Wicket Value"]),
+                               "Total": c.col_raa(help=c.HELP["Total"])})
+    c.note(c.VALUE_NOTE + " Batting outs here count dismissals on strike; the career average also counts "
+           "run-outs at the non-striker's end.")
 
 # ------------------------------------------------------------------ against types and hands
 with t_match:
@@ -287,14 +294,16 @@ VT_BAT_CFG = {"Venue": c.col_text(), "Opposition": c.col_text(), "Mat": c.col_in
               "Inns": c.col_int(help="Innings at the crease"), "Runs": c.col_int(),
               "Balls": c.col_int(help="Balls faced, wides not counted"), "SR": c.col_1(help=c.HELP["SR"]),
               "Avg": c.col_1(help=c.HELP["Avg"]), "Boundary %": c.col_pct(help=c.HELP["Boundary %"]),
-              "RAA": c.col_raa()}
+              "RAA": c.col_raa(help=c.HELP["RAA"]), "Wicket Value": c.col_raa(help=c.HELP["Wicket Value"]),
+              "Total": c.col_raa(help=c.HELP["Total"])}
 VT_BOWL_CFG = {"Venue": c.col_text(), "Opposition": c.col_text(), "Mat": c.col_int(help="Matches in which the player bowled"),
                "Overs": c.col_1(help="Overs bowled (3.2 = 3 overs 2 balls)"), "Wkts": c.col_int(),
                "Runs": c.col_int(help="Runs conceded"), "Econ": c.col_2(help=c.HELP["Econ"]),
                "Avg": c.col_1(help=c.HELP["Avg"]), "Balls per wkt": c.col_1(help=c.HELP["Balls per dismissal"]),
-               "Dot %": c.col_pct(help=c.HELP["Dot %"])}
-VT_BAT_COLS = ["Mat", "Inns", "Runs", "Balls", "SR", "Avg", "Boundary %", "RAA"]
-VT_BOWL_COLS = ["Mat", "Overs", "Wkts", "Runs", "Econ", "Avg", "Balls per wkt", "Dot %"]
+               "Dot %": c.col_pct(help=c.HELP["Dot %"]), "RAA": c.col_raa(help=c.HELP["RAA"]),
+               "Wicket Value": c.col_raa(help=c.HELP["Wicket Value"]), "Total": c.col_raa(help=c.HELP["Total"])}
+VT_BAT_COLS = ["Mat", "Inns", "Runs", "Balls", "SR", "Avg", "Boundary %", "RAA", "Wicket Value", "Total"]
+VT_BOWL_COLS = ["Mat", "Overs", "Wkts", "Runs", "Econ", "Avg", "Balls per wkt", "Dot %", "RAA", "Wicket Value", "Total"]
 
 with t_vt:
     st.markdown('<p class="dd-meta">Batting and bowling at each PSL ground and against each team, in the chosen '
@@ -326,9 +335,9 @@ with t_vt:
                    f"{unit}." + (f" {left} {plural if left != 1 else plural[:-1]} under {minimum} {unit} left out; "
                                  "switch on Show all to see them." if left else
                                  (f" Rows under {minimum} {unit} are small samples." if show_all else "")))
-    c.note("Batting Avg counts every dismissal, like the career average; RAA counts outs on strike, like the rest "
-           "of the site. Runs conceded leave out byes and leg-byes; run outs are not bowler wickets. "
-           + c.HELP["RAA"])
+    c.note("Batting Avg counts every dismissal, like the career average; Wicket Value counts outs on strike, like "
+           "the rest of the site. Runs conceded leave out byes and leg-byes; run outs are not bowler wickets. "
+           + c.VALUE_NOTE)
 
 # ------------------------------------------------------------------ match by match
 with t_log:

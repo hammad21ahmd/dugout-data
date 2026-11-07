@@ -67,7 +67,11 @@ POS, NEG = "#18A06B", "#D64545"                     # diverging poles: above / b
 
 # ---- One help line per metric (docs/STYLE.md section 8).
 HELP = {
-    "RAA": "Runs above average: runs added compared with an average men's T20 player in the same season and phase.",
+    "RAA": ("RAA: batting, actual runs minus expected runs from the same match situation (over and wickets down); "
+            "bowling, expected runs minus runs conceded. Baseline: the average men's T20 player worldwide, 2016-2026."),
+    "Wicket Value": ("Wicket Value: the value of dismissals in runs. Staying not out when an average batter would be "
+                     "out adds value; a bowler taking wickets when an average bowler would not adds value."),
+    "Total": "Total = RAA + Wicket Value, both in runs.",
     "WPA": "Win probability added: how much the player's balls changed the team's chance of winning (1.00 = one win).",
     "SR": "Strike rate: runs per 100 balls faced.",
     "Econ": "Economy: runs conceded per over; wides and no-balls count, byes and leg-byes do not.",
@@ -75,9 +79,22 @@ HELP = {
     "Boundary %": "Share of balls faced that went for four or six.",
     "Avg": "Average: runs per dismissal.",
     "Balls per dismissal": "Balls faced (or bowled) for each dismissal.",
-    "Wins": "RAA turned into wins with the runs that make one win in that season.",
     "per 100 balls": "The same value per 100 balls, so players with different workloads compare fairly.",
 }
+
+# The three lines under every value table (owner's wording 2026-11-07), batting and bowling.
+VALUE_NOTES = {
+    "bat": ["RAA: actual runs minus expected runs from the same match situation (over and wickets down); "
+            "baseline: the average men's T20 batter worldwide, 2016-2026.",
+            "Wicket Value: value of dismissals in runs; staying not out when an average batter would be out "
+            "adds value.",
+            "Total = RAA + Wicket Value, both in runs."],
+    "bowl": ["RAA: expected runs minus runs conceded from the same match situation (over and wickets down); "
+             "baseline: the average men's T20 bowler worldwide, 2016-2026.",
+             "Wicket Value: value of wickets in runs; taking a wicket when an average bowler would not adds value.",
+             "Total = RAA + Wicket Value, both in runs."],
+}
+VALUE_NOTE = " ".join([HELP["RAA"], HELP["Wicket Value"], HELP["Total"]])
 
 CSS = f"""
 <style>
@@ -480,7 +497,7 @@ def footer(copyright=False, extra=""):
 def cards(items, lead=False, detail=False, export=None):
     """items: (label, value, note). By default a card shows its label and value only; the note
     becomes the card's hover tooltip. A value that is not a number (a name, a role) is shown on
-    one line in smaller type, with the note as one short figure below it (e.g. '+2,033 RAA').
+    one line in smaller type, with the note as one short figure below it (e.g. '+646 Total').
     detail=True (Player, Matchups) shows the note as a short second line under the number too,
     because phones cannot show hover tooltips ('3,377 balls', 'HS 115', '10 fours, 5 sixes').
     lead=True adds the accent rule (headline cards). export="Title": owner mode adds 'Save as image'."""
@@ -670,7 +687,7 @@ def num_fmt(v):
 
 
 def raa_fmt(v):
-    """RAA: one decimal, or none once it reaches 100 (+2,033)."""
+    """RAA, Wicket Value, Total: one decimal, or none once it reaches 100 (+646)."""
     if v is None or (isinstance(v, float) and np.isnan(v)):
         return "-"
     return f"{v:+,.0f}" if abs(v) >= 100 else f"{v:+,.1f}"
@@ -853,8 +870,9 @@ def squad_ids():
 BALL_SQL = """SELECT d.delivery_no, d.match_id, m.season, m.date, m.venue_name, d.inning,
                      d.batting_team, d.bowling_team, d.over_no, d.batter_id, d.non_striker_id,
                      d.bowler_id, d.player_dismissed_id, d.batsman_runs, d.extra_runs, d.total_runs,
-                     d.extras_type, d.dismissal_kind, d.fielder
-              FROM deliveries d JOIN matches m USING (match_id)
+                     d.extras_type, d.dismissal_kind, d.fielder,
+                     v.bat_raa, v.bat_wv, v.bowl_raa, v.bowl_wv
+              FROM deliveries d JOIN matches m USING (match_id) LEFT JOIN value_ball v USING (delivery_no)
               WHERE d.inning IN (1, 2) {extra} ORDER BY d.delivery_no"""
 
 
@@ -1223,7 +1241,7 @@ def player_summary(pid, lo, hi):
     b = in_seasons(balls_for(pid), lo, hi)
     bat, bowl = b[b["batter_id"] == pid], b[b["bowler_id"] == pid]
     dism = b[(b["player_dismissed_id"] == pid) & b["out_any"]]
-    val = {t: in_seasons(value(t), lo, hi) for t in ("raa_bat", "raa_bowl", "wpa_bat", "wpa_bowl")}
+    val = {t: in_seasons(value(t), lo, hi) for t in ("value_bat", "value_bowl", "wpa_bat", "wpa_bowl")}
     val = {t: v[v["player_id"] == pid] for t, v in val.items()}
     inns_bat = bat.groupby(["match_id", "inning"])["batsman_runs"].sum()
     appeared = pd.concat([b.loc[b["batter_id"] == pid, ["match_id", "inning"]],
@@ -1238,11 +1256,13 @@ def player_summary(pid, lo, hi):
         "innings": len(appeared), "runs": runs, "balls": balls_f, "outs": outs,
         "avg": div(runs, outs).item(), "sr": div(runs, balls_f, 100).item(),
         "fifties": int((inns_bat >= 50).sum()), "hs": int(inns_bat.max()) if len(inns_bat) else 0,
-        "bat_raa": val["raa_bat"]["raa"].sum(), "bat_wpa": val["wpa_bat"]["wpa"].sum(),
+        "bat_raa": val["value_bat"]["raa"].sum(), "bat_wv": val["value_bat"]["wv"].sum(),
+        "bat_total": val["value_bat"]["total"].sum(), "bat_wpa": val["wpa_bat"]["wpa"].sum(),
         "legal": lb, "conceded": rc, "wkts": wk, "bowl_matches": bowl["match_id"].nunique(),
         "econ": div(rc, lb, 6).item(), "bowl_avg": div(rc, wk).item(),
         "bowl_dot": div(bowl["bowl_dot"].sum(), lb, 100).item(),
-        "bowl_raa": val["raa_bowl"]["raa"].sum(), "bowl_wpa": val["wpa_bowl"]["wpa"].sum(),
+        "bowl_raa": val["value_bowl"]["raa"].sum(), "bowl_wv": val["value_bowl"]["wv"].sum(),
+        "bowl_total": val["value_bowl"]["total"].sum(), "bowl_wpa": val["wpa_bowl"]["wpa"].sum(),
     }
 
 
@@ -1711,29 +1731,12 @@ VT_MIN_BAT = 30          # default minimum balls faced for a row of the batting 
 VT_MIN_BOWL = 12         # default minimum legal balls for a row of the bowling tables
 
 
-@st.cache_data(show_spinner=False)
-def bat_raa_rates():
-    """The average-player standard behind batting RAA, read back from raa_bat: expected runs and outs per
-    ball faced for each season and phase (the same for every player of that season and phase), and each
-    season's runs per wicket. Batting RAA of any set of balls is then
-    runs - balls * rpb + (balls * opb - outs on strike) * rpw, which adds up to raa_bat exactly.
-    tests/checks.py checks these against MySQL raa_baseline."""
-    r = value("raa_bat")
-    g = r.groupby(["season", "phase_no"]).agg(balls=("balls", "sum"), er=("exp_runs", "sum"),
-                                              eo=("exp_outs", "sum")).reset_index()
-    g["rpb"], g["opb"] = g["er"] / g["balls"], g["eo"] / g["balls"]
-    k = r[(r["exp_outs"] - r["outs"]).abs() >= 1]
-    rpw = ((k["raa"] - (k["runs"] - k["exp_runs"])) / (k["exp_outs"] - k["outs"])).groupby(k["season"]).median()
-    g["rpw"] = g["season"].map(rpw)
-    return g[["season", "phase_no", "rpb", "opb", "rpw"]]
-
-
 def venue_team_splits(pid, lo, hi):
     """One player's batting and bowling at each venue and against each team, in the chosen seasons, every
     row (no minimum), most balls first. Same rules as the rest of the page: innings 1 and 2, balls faced
     without wides, legal balls without wides and no-balls, runs conceded without byes and leg-byes, bowler
     wickets only, venue spellings joined (venue_name). Batting Avg counts every dismissal, like the career
-    average; RAA uses outs on strike, like raa_bat."""
+    average. RAA, Wicket Value and Total add up the per-ball values (value_ball) of those balls."""
     b = in_seasons(balls_for(pid), lo, hi).copy()
     b["venue"] = b["venue_name"].map(ground)
     mp = in_seasons(query("SELECT x.match_id, x.team, x.player_id, m.season, m.team1, m.team2, m.venue_name "
@@ -1743,7 +1746,6 @@ def venue_team_splits(pid, lo, hi):
     bat, bowl = b[b["batter_id"] == pid], b[b["bowler_id"] == pid]
     dism = b[(b["player_dismissed_id"] == pid) & b["out_any"]]
     crease = b[(b["batter_id"] == pid) | (b["non_striker_id"] == pid)]
-    rates = bat_raa_rates()
     out = {}
     for key, col, bat_opp, bowl_opp in (("venue", "venue", "venue", "venue"), ("team", "opp", "bowling_team",
                                                                                 "batting_team")):
@@ -1756,11 +1758,7 @@ def venue_team_splits(pid, lo, hi):
             g = bat_stats(bat, bat_opp).set_index(bat_opp)
             inns = crease.drop_duplicates(["match_id", "inning"]).groupby(bat_opp).size()
             outs_all = dism.groupby(bat_opp).size()
-            r = bat.groupby(["season", "phase_no", bat_opp]).agg(n=("faced", "sum"), runs=("batsman_runs", "sum"),
-                                                                 o=("batter_out", "sum")).reset_index()
-            r = r.merge(rates, on=["season", "phase_no"], how="left")
-            r["raa"] = r["runs"] - r["n"] * r["rpb"] + (r["n"] * r["opb"] - r["o"]) * r["rpw"]
-            raa = r.groupby(bat_opp)["raa"].sum()
+            val = bat.groupby(bat_opp)[["bat_raa", "bat_wv"]].sum()
             keys = sorted(set(inns.index) | set(g.index))
             t = pd.DataFrame({label: keys})
             t["Mat"] = t[label].map(mat).fillna(0).astype(int)
@@ -1771,7 +1769,9 @@ def venue_team_splits(pid, lo, hi):
             t["SR"] = div(t["Runs"], t["Balls"], 100)
             t["Avg"] = div(t["Runs"], t["Outs"])
             t["Boundary %"] = div(t[label].map(g["fours"] + g["sixes"]).fillna(0), t["Balls"], 100)
-            t["RAA"] = t[label].map(raa).fillna(0.0)
+            t["RAA"] = t[label].map(val["bat_raa"]).fillna(0.0)
+            t["Wicket Value"] = t[label].map(val["bat_wv"]).fillna(0.0)
+            t["Total"] = t["RAA"] + t["Wicket Value"]
             out[f"bat_{key}"] = t.sort_values(["Balls", label], ascending=[False, True]).reset_index(drop=True)
         # bowling
         if bowl.empty:
@@ -1785,6 +1785,10 @@ def venue_team_splits(pid, lo, hi):
             t["Wkts"] = g["wkts"].astype(int)
             t["Runs"] = g["runs"].astype(int)
             t["Econ"], t["Avg"], t["Balls per wkt"], t["Dot %"] = g["econ"], g["avg"], g["sr"], g["dot_pct"]
+            val = bowl.groupby(bowl_opp)[["bowl_raa", "bowl_wv"]].sum()
+            t["RAA"] = g[bowl_opp].map(val["bowl_raa"]).fillna(0.0).values
+            t["Wicket Value"] = g[bowl_opp].map(val["bowl_wv"]).fillna(0.0).values
+            t["Total"] = t["RAA"] + t["Wicket Value"]
             out[f"bowl_{key}"] = t.sort_values(["Legal balls", label], ascending=[False, True]).reset_index(drop=True)
     return out
 
@@ -2048,10 +2052,10 @@ def share_card_png(pid, lo, hi):
     ax.text(72, 375, f"{sub}    PSL {seas}", color=MUTED, fontsize=20, va="center")
     items = []
     if s["bat"]:
-        items += [("Batting RAA", raa_fmt(s["bat_raa"])), ("Runs", num_fmt(s["runs"])),
+        items += [("Batting Total", raa_fmt(s["bat_total"])), ("Runs", num_fmt(s["runs"])),
                   ("Strike rate", fmt(s["sr"])), ("Average", fmt(s["avg"]))]
     if s["bowl"]:
-        items += [("Bowling RAA", raa_fmt(s["bowl_raa"])), ("Wickets", num_fmt(s["wkts"])),
+        items += [("Bowling Total", raa_fmt(s["bowl_total"])), ("Wickets", num_fmt(s["wkts"])),
                   ("Economy", fmt(s["econ"], 2)), ("Bowling average", fmt(s["bowl_avg"]))]
     items = items[:8]
     for i, (label, val) in enumerate(items):
@@ -2061,7 +2065,9 @@ def share_card_png(pid, lo, hi):
         ax.add_patch(plt.Rectangle((x, y), 450, 6, color=ACCENT))
         ax.text(x + 28, y + 50, label.upper(), color=MUTED, fontsize=15, fontweight="bold", va="center")
         ax.text(x + 28, y + 112, val, color=INK, fontsize=40, fontweight="bold", va="center")
-    ax.text(72, 1255, "RAA: runs above an average men's T20 player in the same season and phase.",
+    ax.text(72, 1235, "Total = RAA + Wicket Value: runs above the average men's T20 player worldwide",
+            color=FAINT, fontsize=14, va="center")
+    ax.text(72, 1262, "(2016-2026) in the same match situation (over and wickets down).",
             color=FAINT, fontsize=14, va="center")
     ax.text(72, 1300, "Data: Cricsheet.org | Analysis by Hammad", color=MUTED, fontsize=16, va="center")
     ax.text(1008, 1300, "Dugout Data", color=ACCENT, fontsize=16, fontweight="bold", va="center", ha="right")
