@@ -127,6 +127,14 @@ st.markdown(f"""
   totals.
 """)
 
+c.section("Teams: venues")
+st.markdown(f"""
+- For the chosen franchise, each ground (spellings joined) in the chosen seasons: matches, won, lost, win % (won out
+  of matches with a winner; ties have no winner in the data), average total batting first and batting second,
+  highest and lowest total (runs including extras, innings 1 and 2 only, no-result matches left out). A ground
+  needs at least {c.TV_MIN_MATCHES} matches; "Show all" lists every one.
+""")
+
 c.section("Limits")
 st.markdown("""
 - RAA, Wicket Value, Total and WPA say how much value a player added, not why. They do not adjust for the

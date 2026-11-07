@@ -223,9 +223,27 @@ a {{ color: {ACCENT}; }}
 .dd-mpairs span {{ color: {MUTED}; min-width: 0; overflow-wrap: break-word; }}
 .dd-mpairs b {{ color: {INK}; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right;
                 white-space: nowrap; }}
+/* ---- desktop wrapping table (common.html_table): shown by the table's own container query only when the
+   grid would not fit its box (wider than 640 px); headers and text wrap, numbers stay on one line ---- */
+[class*="st-key-dd_tbl_"] {{ container-type: inline-size; }}
+[data-testid="stElementContainer"]:has(.dd-dtable) {{ display: none; }}
+.dd-dtable {{ overflow-x: auto; }}
+.dd-dtable table {{ width: 100%; border-collapse: separate; border-spacing: 0; background: {CHART_BG};
+                    border: 1px solid {BORDER}; border-radius: 10px; table-layout: auto; }}
+.dd-dtable th, .dd-dtable td {{ padding: .4rem .5rem; border-bottom: 1px solid {BORDER}; font-size: .875rem;
+                                line-height: 1.35; vertical-align: top; }}
+.dd-dtable th {{ color: {INK}; font-weight: 400; background: {SURFACE_2}; overflow-wrap: normal; }}
+.dd-dtable th[title] {{ cursor: help; }}
+.dd-dtable td {{ color: {INK}; font-variant-numeric: tabular-nums; }}
+.dd-dtable td.n {{ text-align: right; white-space: nowrap; }}
+.dd-dtable th.n {{ text-align: right; }}
+.dd-dtable .t {{ text-align: left; overflow-wrap: break-word; }}
+.dd-dtable td.s {{ white-space: nowrap; }}
+.dd-dtable tr:last-child td {{ border-bottom: 0; }}
 @media (max-width: 640px) {{
   [data-testid="stElementContainer"]:has(.dd-mtable) {{ display: block !important; }}
   [data-testid="stElementContainer"]:has([data-testid="stDataFrame"]) {{ display: none !important; }}
+  [data-testid="stElementContainer"]:has(.dd-dtable) {{ display: none !important; }}
 }}
 
 /* ---- footer ---- */
@@ -565,7 +583,23 @@ def table(df, column_config=None, title=None, **kwargs):
         conf = {**conf, "type_config": {**conf["type_config"], "format": None}}
         cfg[col] = conf
     data = df.style.format(fmts, na_rep="-") if fmts else df
-    st.dataframe(data, column_config=cfg, **kwargs)
+    # Desktop (2026-11-07, cut cells at 1280 px): a canvas grid cannot wrap, and "small" columns cut headers
+    # such as "Chasing side won %". Every column now gets the pixel width its header and longest cell need
+    # (grid_widths); if the grid fits its box at that width it shows (sortable, as before), else a CSS
+    # container query swaps in a plain HTML table whose headers and long text wrap and whose numbers stay on
+    # one line. The box is measured by the browser, so a table inside st.columns decides by its own width.
+    widths = grid_widths(df, cfg, fmts)
+    for col, px in widths.items():
+        conf = cfg.get(col)
+        cfg[col] = {**conf, "width": px} if isinstance(conf, dict) else {"width": px}
+    need = sum(widths.values()) + 2                       # + the grid's 1 px border a side
+    key = _table_key()
+    with st.container(key=key):
+        st.dataframe(data, column_config=cfg, **kwargs)
+        st.markdown(f"<style>@media (min-width: 641px) {{ @container (max-width: {need - 0.02:.2f}px) {{ .st-key-{key} "
+                    '[data-testid="stElementContainer"]:has([data-testid="stDataFrame"]) { display: none !important; } '
+                    f'.st-key-{key} [data-testid="stElementContainer"]:has(.dd-dtable) {{ display: block !important; }} }} }}'
+                    "</style>" + html_table(df, cfg, fmts), unsafe_allow_html=True)
     # Phone (CSS, 640 px or less): the grid above is hidden and this plain HTML copy shows instead. A canvas
     # grid cannot wrap text, so on a phone the last columns and long text (Method's Meaning) were cut off.
     st.markdown(phone_table(df, cfg, fmts, index=not kwargs["hide_index"]), unsafe_allow_html=True)
@@ -573,6 +607,66 @@ def table(df, column_config=None, title=None, **kwargs):
         export_table(df, cfg, fmts, title=title, index=not kwargs["hide_index"])
     if n > MAX_ROWS:
         note(f"Showing the first {MAX_ROWS} of {n} rows. Narrow the seasons or raise the minimum to see others.")
+
+
+# Advance widths of Source Sans (the grid's 400 14px font), in thousandths of an em; others count as 0.62 em.
+_GLYPH = {**dict.fromkeys("0123456789", 497), " ": 200, ".": 249, ",": 249, ":": 249, ";": 249, "'": 220,
+          "%": 812, "-": 311, "+": 497, "=": 497, "(": 300, ")": 300, "/": 343, "&": 640, "#": 497, "*": 420,
+          "a": 486, "b": 548, "c": 445, "d": 548, "e": 497, "f": 297, "g": 490, "h": 541, "i": 246, "j": 252,
+          "k": 489, "l": 254, "m": 822, "n": 543, "o": 535, "p": 548, "q": 548, "r": 342, "s": 419, "t": 330,
+          "u": 541, "v": 461, "w": 707, "x": 444, "y": 461, "z": 420,
+          "A": 544, "B": 600, "C": 579, "D": 626, "E": 530, "F": 495, "G": 625, "H": 655, "I": 266, "J": 470,
+          "K": 590, "L": 487, "M": 731, "N": 652, "O": 671, "P": 590, "Q": 671, "R": 594, "S": 549, "T": 549,
+          "U": 650, "V": 520, "W": 788, "X": 516, "Y": 486, "Z": 548}
+_GRID_PAD = 22          # grid cell: 8 px padding a side, plus room for the header's sort arrow and rounding
+
+
+def text_px(s, size=14):
+    """Width of a line of text in the grid font, in px (a little generous: 6% added)."""
+    return sum(_GLYPH.get(ch, 620) for ch in str(s)) * size / 1000 * 1.06
+
+
+def grid_widths(df, cfg, fmts):
+    """Pixel width per column so that no header and no cell is cut in the desktop grid."""
+    out = {}
+    for col in df.columns:
+        conf = cfg.get(col)
+        head = str(conf.get("label") or col) if isinstance(conf, dict) else str(col)
+        cells = [_cell_text(v, fmts.get(col), conf) for v in df[col].tolist()]
+        out[col] = int(np.ceil(max([text_px(head)] + [text_px(t) for t in cells]) + _GRID_PAD))
+    return out
+
+
+def _table_key():
+    """A key for each table's box, unique within one run of the page (reset by Home.py before each page)."""
+    n = st.session_state.get("_dd_table_n", 0) + 1
+    st.session_state["_dd_table_n"] = n
+    return f"dd_tbl_{n}"
+
+
+def reset_table_keys():
+    st.session_state["_dd_table_n"] = 0
+
+
+def html_table(df, cfg, fmts):
+    """The desktop table used when the grid would not fit its box: headers and long text wrap, numbers
+    stay on one line, the column help shows on the header as a tooltip."""
+    cols = list(df.columns)
+    esc = html.escape
+    th, numeric = [], []
+    for col in cols:
+        conf = cfg.get(col) if isinstance(cfg.get(col), dict) else {}
+        n = pd.api.types.is_numeric_dtype(df[col]) or conf.get("alignment") == "right" \
+            or conf.get("type_config", {}).get("type") == "number"
+        numeric.append(n)
+        tip = f' title="{esc(conf["help"])}"' if conf.get("help") else ""
+        th.append(f'<th class="{"n" if n else "t"}"{tip}>{esc(str(conf.get("label") or col))}</th>')
+    rows = [[_cell_text(v, fmts.get(col), cfg.get(col)) for col, v in zip(cols, r)] for r in df.itertuples(index=False)]
+    # short text (names, grounds, cities: at most 24 characters) stays on one line; long text wraps
+    kind = ["n" if n else ("t s" if max((len(r[i]) for r in rows), default=0) <= 24 else "t")
+            for i, n in enumerate(numeric)]
+    body = "".join("<tr>" + "".join(f'<td class="{k}">{esc(v)}</td>' for v, k in zip(r, kind)) + "</tr>" for r in rows)
+    return f'<div class="dd-dtable"><table><thead><tr>{"".join(th)}</tr></thead><tbody>{body}</tbody></table></div>'
 
 
 PHONE_WIDTH = 326       # px of table at 360 px wide (block padding .9rem a side, 1 px border)
@@ -1386,6 +1480,35 @@ def team_style(lo, hi):
     t["Bowl: runs in 4s and 6s %"] = t["Team"].map(pd.Series(div(bowl["bruns"], bowl["runs"], 100), bowl.index))
     t["Bowl: dot %"] = t["Team"].map(pd.Series(div(bowl["dots"], bowl["legal"], 100), bowl.index))
     return t
+
+
+TV_MIN_MATCHES = 3      # Teams > Venues: a ground needs this many matches of the team (Show all lists every one)
+
+
+@st.cache_data(show_spinner=False, max_entries=200)
+def team_venues(team, lo, hi):
+    """Teams > Venues: `team` at each ground (spellings joined by venue_alias: matches.venue_name) in the chosen
+    seasons. Matches, Won, Lost (a tie has no winner in the data, so it is neither), Win % = won out of
+    matches with a winner; innings totals (runs including extras, innings 1 and 2 only, so no super overs)
+    from matches with a result: average batting first, average batting second, highest and lowest."""
+    m = query("""SELECT match_id, venue_name, winner, result FROM matches
+                 WHERE season BETWEEN ? AND ? AND (team1 = ? OR team2 = ?)""", (lo, hi, team, team))
+    if m.empty:
+        return pd.DataFrame(columns=["Venue", "Matches", "Won", "Lost", "Win %", "Avg 1st inns", "Avg 2nd inns",
+                                     "Highest", "Lowest"])
+    inns = query("""SELECT d.match_id, d.inning, SUM(d.total_runs) runs FROM deliveries d JOIN matches m USING (match_id)
+                    WHERE d.inning IN (1, 2) AND m.season BETWEEN ? AND ? AND d.batting_team = ?
+                      AND m.result <> 'no result' GROUP BY 1, 2""", (lo, hi, team))
+    inns = inns.merge(m[["match_id", "venue_name"]], on="match_id")
+    m = m.assign(won=m["winner"] == team, lost=m["winner"].fillna("").ne("") & (m["winner"] != team))
+    g = m.groupby("venue_name").agg(Matches=("match_id", "size"), Won=("won", "sum"), Lost=("lost", "sum"))
+    i = inns.groupby("venue_name")["runs"]
+    g["Win %"] = div(g["Won"], g["Won"] + g["Lost"], 100)
+    g["Avg 1st inns"] = inns[inns["inning"] == 1].groupby("venue_name")["runs"].mean()
+    g["Avg 2nd inns"] = inns[inns["inning"] == 2].groupby("venue_name")["runs"].mean()
+    g["Highest"], g["Lowest"] = i.max(), i.min()
+    out = g.reset_index().rename(columns={"venue_name": "Venue"})
+    return out.sort_values(["Matches", "Won", "Venue"], ascending=[False, False, True]).reset_index(drop=True)
 
 
 @st.cache_data(show_spinner=False, max_entries=200)

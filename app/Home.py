@@ -64,4 +64,5 @@ if loading is not None:
 c.owner_check(show_seasons=nav.url_path != "method")   # owner mode (HD exports); visitors: nothing changes
 c.header(show_seasons=nav.url_path != "method")   # Method: no number there depends on the seasons
 c.mobile_nav(pages, current=nav)
+c.reset_table_keys()        # table boxes get keys dd_tbl_1, 2, ... in this run
 nav.run()

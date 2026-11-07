@@ -1,6 +1,6 @@
 """
 teams.py - each franchise: value by phase (Total), strongest and weakest roles, top contributors;
-form and streaks; head to head; batting and bowling style and wicket types; player movement; season
+form and streaks; head to head; results and totals at each venue; batting and bowling style and wicket types; player movement; season
 review. READ-ONLY.
 """
 
@@ -46,8 +46,8 @@ labels = [pn[n] for n in sorted(pn)]
 tb = bat[bat["team"] == team].set_index("phase_no").reindex(sorted(pn))
 tw = bowl[bowl["team"] == team].set_index("phase_no").reindex(sorted(pn))
 
-t_val, t_form, t_h2h, t_style, t_move, t_seas = st.tabs(
-    ["Value", "Form", "Head to head", "Style", "Players", "Seasons"])
+t_val, t_form, t_h2h, t_ven, t_style, t_move, t_seas = st.tabs(
+    ["Value", "Form", "Head to head", "Venues", "Style", "Players", "Seasons"])
 with t_val:
     roles = pd.DataFrame([{"Role": f"{k} in the {pn[n].split(' (')[0]}", "per100": t.loc[n, "per100"], "total": t.loc[n, "total"]}
                           for k, t in (("Batting", tb), ("Bowling", tw)) for n in sorted(pn) if pd.notna(t.loc[n, "per100"])])
@@ -132,6 +132,34 @@ with t_h2h:
                 column_config={"Phase": c.col_text(), f"{a_} RR": c.col_2(help="Runs per over"),
                                f"{b_} RR": c.col_2(help="Runs per over"), f"{a_} wkts": c.col_int(help="Wickets lost"),
                                f"{b_} wkts": c.col_int(help="Wickets lost"), "Stronger": c.col_text(width="small")})
+
+# ------------------------------------------------------------------ venues
+with t_ven:
+    c.section(f"{team} at each venue", "Results and team totals at every PSL ground in the chosen seasons. "
+                                       "Totals are runs including extras.")
+    tv_all = st.toggle("Show all", key="tv_all",
+                       help=f"Show every venue, including those with fewer than {c.TV_MIN_MATCHES} matches.")
+    tv = c.team_venues(team, lo, hi)
+    keep = tv if tv_all else tv[tv["Matches"] >= c.TV_MIN_MATCHES]
+    if tv.empty:
+        c.empty(f"{team} played no matches in {c.season_label(lo, hi)}.", " Choose a wider season range.")
+    elif keep.empty:
+        c.empty(f"No venue with at least {c.TV_MIN_MATCHES} {team} matches in {c.season_label(lo, hi)}.",
+                " Switch on Show all to see every venue.")
+    else:
+        c.table(keep, column_config={
+            "Venue": c.col_text(), "Matches": c.col_int(), "Won": c.col_int(), "Lost": c.col_int(),
+            "Win %": c.col_pct(help="Won out of matches with a winner (ties and no results left out)"),
+            "Avg 1st inns": c.col_1(help="Average total when batting first (matches with a result)"),
+            "Avg 2nd inns": c.col_1(help="Average total when batting second (matches with a result)"),
+            "Highest": c.col_int(help="Highest innings total (matches with a result)"),
+            "Lowest": c.col_int(help="Lowest innings total (matches with a result, shortened innings included)")})
+    left = len(tv) - len(keep)
+    c.note(f"Minimum: {c.TV_MIN_MATCHES} matches at a venue. Showing {len(keep)} of {len(tv)} venues"
+           + (f"; {left} with fewer matches left out (switch on Show all to see them)." if left else ".")
+           + " Win %: won out of matches with a winner; a tie has no winner in the data and counts in Matches"
+           " only. Totals and averages leave out no-result matches; rain-shortened"
+           " innings are included. Avg 1st inns and Avg 2nd inns: batting first and batting second.")
 
 # ------------------------------------------------------------------ style and wicket types
 with t_style:
