@@ -10,8 +10,10 @@ Data rules (CLAUDE.md): innings 1 and 2 only; phase = over_no + 1 mapped to this
 balls in delivery_no order; ball faced excludes wides; legal ball excludes wides and
 no-balls; runs conceded include wides and no-ball extras, not byes or leg-byes (no-ball
 with byes: 1 run to the bowler); bowler wickets are bowled, caught, lbw, stumped,
-caught and bowled, hit wicket. Styles come only from public_style (Wikipedia/DBpedia/Wikidata,
-or developer verified).
+caught and bowled, hit wicket. Styles, hands, countries and ages come from player_profile (Dugout's own
+categories built by export/player_profile.py from developer verified, manual, ESPNcricinfo profile,
+DBpedia and the player's own PSL balls; never raw Cricinfo text). The exact birth date is used only to
+work out ages: it is never shown, put in a table or exported; pages show age and birth year only.
 """
 
 import hmac
@@ -38,6 +40,8 @@ DB = Path(os.environ.get("DD_DB") or data_files.LOCAL_PSL)
 SHOW_INSIGHTS = True
 # Aggregates only (never ball by ball); never committed to Git. See data_files.py.
 INSIGHTS_DB = data_files.LOCAL_INSIGHTS
+# Owner's decision 2026-11-09: no longer shown on the Insights page or its charts (the Method tab lists the
+# source in full); kept only so tests can check it is gone. LinkedIn posts keep their own credit (CLAUDE.md).
 INSIGHTS_CREDIT = "Data: ESPNcricinfo ball-by-ball"
 MAX_ROWS = 50
 COPYRIGHT = "Analysis and charts (c) Hammad Ahmad, Dugout Data. Ball-by-ball data: Cricsheet.org (ODC-BY)."
@@ -48,9 +52,21 @@ FOOTER = "Dugout Data | Data: Cricsheet.org | Analysis by Hammad"
 SITE = "dugoutdata.streamlit.app"      # printed under owner-mode image exports
 BOWLER_KINDS = ["bowled", "caught", "lbw", "stumped", "caught and bowled", "hit wicket"]
 NOT_OUT_KINDS = ["retired hurt", "retired not out"]
-STYLE_ORDER = ["Right-arm Pace", "Left-arm Pace", "Right-arm Off-spin", "Right-arm Leg-spin",
-               "Left-arm Orthodox", "Left-arm Chinaman", "Unknown"]
+# Dugout style system (player_profile): Group (Pace, Spin) > Family > Type. Never Cricinfo's wording.
+STYLE_ORDER = ["Right-arm Pace", "Left-arm Pace", "Right-arm Off-spin", "Left-arm Orthodox",
+               "Right-arm Leg-spin", "Left-arm Wrist-spin", "Unknown"]
+FAMILY_ORDER = ["Pace", "Finger Spin", "Wrist Spin"]
+OLD_TYPE_NAMES = {"Left-arm Chinaman": "Left-arm Wrist-spin"}     # old shared links keep working
 UNKNOWN = "Unknown"
+PROFILE_CREDIT = "Source: ESPNcricinfo"
+# Every page ends with this link to the Method tab, which lists every data source (owner's decision 2026-11-08:
+# no per-page "Source: ESPNcricinfo" lines; 2026-11-09: no Insights credit either, only a season line).
+METHOD_LINK = "Data sources and method"
+IDEA_CREDIT = ("Idea credit: Zain (zainalysis cric) for explaining RAA. "
+               "Dugout's model and numbers are built from our own dataset.")
+# Shown publicly for each value source (CLAUDE.md: only these labels; Cricinfo only as ESPNcricinfo).
+SOURCE_LABEL = {"developer": "Developer verified", "manual": "Wikipedia", "dbpedia": "Wikipedia",
+                "wikidata": "Wikipedia", "cricinfo": "ESPNcricinfo", "inferred": "inferred from PSL balls (ESPNcricinfo)"}
 TEAM_CODES = {"Karachi Kings": "KK", "Lahore Qalandars": "LQ", "Islamabad United": "IU", "Peshawar Zalmi": "PZ",
               "Quetta Gladiators": "QG", "Multan Sultans": "MS", "Hyderabad Kingsmen": "HK", "Rawalpindiz": "RP"}
 TEAM_LEGEND = ", ".join(f"{v} {k}" for k, v in TEAM_CODES.items())
@@ -250,6 +266,8 @@ a {{ color: {ACCENT}; }}
 .dd-footer {{ color: {MUTED}; font-size: .85rem; border-top: 1px solid {BORDER}; margin-top: 3rem; padding-top: .9rem; }}
 .dd-footer-credit {{ display: block; color: {MUTED}; }}
 .dd-footer-small {{ display: block; color: {FAINT}; font-size: .78rem; margin-top: .3rem; line-height: 1.45; }}
+.st-key-dd_footer_link [data-testid="stPageLink-NavLink"] {{ padding: 0; min-height: 0; }}
+.st-key-dd_footer_link [data-testid="stPageLink-NavLink"] p {{ color: {MUTED}; font-size: .85rem; text-decoration: underline; }}
 
 /* ---- phone first ---- */
 @media (max-width: 640px) {{
@@ -505,11 +523,14 @@ def footer(copyright=False, extra=""):
     # Credit line, then the details on their own lines (separate blocks, so they never run together).
     lines = ([html.escape(extra)] if extra else []) + ([html.escape(COPYRIGHT)] if copyright else []) + [
         f'Data export {html.escape(date_fmt(info.get("exported_at_utc", "")[:10]))}. Cricsheet data is shared '
-        f'under the ODC-BY licence; batting and bowling styles come from Wikipedia, DBpedia and Wikidata (CC BY-SA) or are '
-        f'developer verified.']
+        f'under the ODC-BY licence. Player ages, countries, batting hands and bowling styles: {PROFILE_CREDIT}, '
+        f'Wikipedia, DBpedia and Wikidata (CC BY-SA), or developer verified, grouped into Dugout\'s own categories.']
     st.markdown(f'<div class="dd-footer"><div class="dd-footer-credit">{FOOTER}</div>'
                 + "".join(f'<div class="dd-footer-small">{x}</div>' for x in lines) + '</div>',
                 unsafe_allow_html=True)
+    # "Data sources and method": an in-app link (keeps the session, unlike a plain <a href>).
+    with st.container(key="dd_footer_link"):
+        st.page_link("views/method.py", label=METHOD_LINK)
 
 
 def cards(items, lead=False, detail=False, export=None):
@@ -889,9 +910,54 @@ def export_info():
 
 @st.cache_data(show_spinner=False)
 def players():
-    p = query("SELECT p.player_id, p.display_name, p.short_name, s.batting_hand, s.bowling_style, s.source_url, "
-              "s.hand_source, s.style_source FROM players p LEFT JOIN public_style s USING (player_id)")
+    """One row per player: names, the Wikipedia source_url (public_style) and the profile (player_profile).
+    batting_hand and bowling_style (the Dugout Type) are the resolved values every page uses."""
+    if query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'player_profile'").empty:
+        # an older data file: public styles only, no profile
+        p = query("SELECT p.player_id, p.display_name, p.short_name, s.batting_hand, "
+                  "s.bowling_style, s.source_url, s.hand_source, s.style_source FROM players p "
+                  "LEFT JOIN public_style s USING (player_id)")
+        p["bowling_style"] = p["bowling_style"].replace(OLD_TYPE_NAMES)
+        fam = {"Right-arm Pace": "Pace", "Left-arm Pace": "Pace", "Right-arm Off-spin": "Finger Spin",
+               "Left-arm Orthodox": "Finger Spin", "Right-arm Leg-spin": "Wrist Spin", "Left-arm Wrist-spin": "Wrist Spin"}
+        p["style_family"] = p["bowling_style"].map(fam)
+        p["style_group"] = np.where(p["style_family"] == "Pace", "Pace", np.where(p["style_family"].notna(), "Spin", None))
+        for col in ("birth_date", "birth_year", "country", "overseas", "hand_conf", "style_conf"):
+            p[col] = None
+        return p.set_index("player_id")
+    p = query("SELECT p.player_id, p.display_name, p.short_name, f.bat_hand AS batting_hand, "
+              "f.style_type AS bowling_style, f.style_group, f.style_family, s.source_url, f.hand_source, "
+              "f.hand_conf, f.style_source, f.style_conf, f.birth_date, f.birth_year, f.country, f.overseas "
+              "FROM players p LEFT JOIN player_profile f USING (player_id) "
+              "LEFT JOIN public_style s USING (player_id)")
     return p.set_index("player_id")
+
+
+def age_years(birth_dates, on_dates):
+    """Age in years (decimal) on each date; NaN where the birth date is unknown."""
+    b = pd.to_datetime(pd.Series(birth_dates).reset_index(drop=True), errors="coerce")
+    d = pd.to_datetime(pd.Series(on_dates).reset_index(drop=True), errors="coerce")
+    return ((d - b).dt.days / 365.25).to_numpy()
+
+
+def whole_age(birth_date, on_date):
+    """Completed years on on_date (the age people say), or None."""
+    b, d = pd.to_datetime(birth_date, errors="coerce"), pd.to_datetime(on_date, errors="coerce")
+    if pd.isna(b) or pd.isna(d):
+        return None
+    return int(d.year - b.year - ((d.month, d.day) < (b.month, b.day)))
+
+
+@st.cache_data(show_spinner=False)
+def appearances():
+    """One row per player per match (squads) with season, date, team, age on the day (years, decimal)
+    and the overseas flag. The birth date itself is dropped here, so no table built from this has it."""
+    a = query("SELECT x.match_id, x.team, x.player_id, m.season, m.date FROM match_players x "
+              "JOIN matches m USING (match_id)")
+    p = players()
+    a["age"] = age_years(a["player_id"].map(p["birth_date"]), a["date"])
+    a["overseas"] = a["player_id"].map(p["overseas"])
+    return a
 
 
 @st.cache_data(show_spinner=False)
@@ -919,10 +985,14 @@ def _join(items):
 
 @st.cache_data(show_spinner=False)
 def name_labels():
-    """player_id -> the name shown everywhere: the Wikipedia title from public_style where there is
-    one, else the Cricsheet name; never a '(2)' suffix. Players who would share a name are told
-    apart by their teams (latest first) and seasons: 'Usman Khan, Multan Sultans and Hyderabad
-    Kingsmen, 2023-26'."""
+    """player_id -> the name shown everywhere, from the export's player_names table: an owner-set name,
+    else the Wikipedia title, else the Cricsheet name; never a '(2)' suffix and never a team name. Two
+    different people who share a name get their birth year: 'Mohammad Irfan (b. 1982)'. (An older data
+    file without player_names falls back to the old rule below.)"""
+    if not query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'player_names'").empty:
+        # Built by the export (owner's rule 2026-11-08): clean name, birth year only when two people share it,
+        # never a team name.
+        return dict(query("SELECT player_id, shown_name FROM player_names").values)
     p = players()
     base = {pid: wiki_name(r.source_url) or re.sub(r"\s*\(\d+\)$", "", str(r.short_name)) for pid, r in p.iterrows()}
     pt = player_teams()
@@ -997,9 +1067,9 @@ def derive(b):
     for _, r in ph.iterrows():
         b.loc[(over >= r.first_over) & (over <= r.last_over), "phase_no"] = r.phase_no
     p = players()
-    b["bowl_style"] = b["bowler_id"].map(p["bowling_style"]).fillna(UNKNOWN)
-    b["bowl_kind"] = np.where(b["bowl_style"].str.contains("Pace"), "Pace",
-                              np.where(b["bowl_style"] == UNKNOWN, UNKNOWN, "Spin"))
+    b["bowl_style"] = b["bowler_id"].map(p["bowling_style"]).fillna(UNKNOWN)       # Dugout Type
+    b["bowl_family"] = b["bowler_id"].map(p["style_family"]).fillna(UNKNOWN)
+    b["bowl_kind"] = b["bowler_id"].map(p["style_group"]).fillna(UNKNOWN)          # Pace or Spin
     b["bat_hand"] = b["batter_id"].map(p["batting_hand"]).fillna(UNKNOWN)
     return b
 
@@ -1581,6 +1651,148 @@ def player_partners(pid, lo, hi, n=10):
     g = _pairs(s.assign(a=pid, b=s["partner"])).head(n)
     g["Partner"] = g["b"].map(name)
     return g
+
+
+# ------------------------------------------------------------------ left and right (Matchups)
+HAND_PAIRS = ["Left and right", "Both right-handed", "Both left-handed"]
+
+
+def hand_v_bowling(b, col):
+    """Batting by batting hand against each bowling group (col: bowl_kind, bowl_family or bowl_style).
+    Balls with an unknown hand or style are left out."""
+    k = b[(b["bat_hand"] != UNKNOWN) & (b[col] != UNKNOWN)]
+    return bat_stats(k, ["bat_hand", col])
+
+
+@st.cache_data(show_spinner=False, max_entries=80)
+def hand_partnerships(lo, hi):
+    """Stands by the batters' hands: (summary per pair type, left-right pairs with the most runs).
+    Stands with a batter of unknown hand are left out."""
+    s = partnership_stands(lo, hi).copy()
+    hand = players()["batting_hand"]
+    ha, hb = s["a"].map(hand), s["b"].map(hand)
+    s = s[ha.notna() & hb.notna()].copy()
+    ha, hb = ha[s.index], hb[s.index]
+    s["pair"] = np.where(ha != hb, HAND_PAIRS[0], np.where(ha == "Right", HAND_PAIRS[1], HAND_PAIRS[2]))
+    g = s.groupby("pair").agg(stands=("runs", "size"), runs=("runs", "sum"), balls=("balls", "sum"),
+                              fifty=("runs", lambda r: int((r >= 50).sum()))).reindex(HAND_PAIRS).dropna().reset_index()
+    g["per_stand"] = div(g["runs"], g["stands"])
+    g["rr"] = div(g["runs"], g["balls"], 6)
+    g["fifty_pct"] = div(g["fifty"], g["stands"], 100)
+    lr = _pairs(s[s["pair"] == HAND_PAIRS[0]]).head(10)
+    lr["Pair"] = [f"{name(a)} and {name(b)}" for a, b in zip(lr["a"], lr["b"])]
+    return g, lr
+
+
+# ------------------------------------------------------------------ ages and overseas players (Teams > Squad, Player)
+AGE_BANDS = [(0, 21, "21 or under"), (22, 24, "22 to 24"), (25, 27, "25 to 27"), (28, 30, "28 to 30"),
+             (31, 33, "31 to 33"), (34, 99, "34 or over")]
+
+
+def age_band(age):
+    a = np.floor(np.asarray(age, dtype=float))
+    out = np.full(a.shape, None, dtype=object)
+    for lo_, hi_, label in AGE_BANDS:
+        out[(a >= lo_) & (a <= hi_)] = label
+    return out
+
+
+def player_ages(pid):
+    """(age today, birth year, PSL debut age, debut date) for one player; None where unknown."""
+    p = players()
+    bd = p.at[pid, "birth_date"] if pid in p.index else None
+    by = p.at[pid, "birth_year"] if pid in p.index else None
+    a = appearances()
+    mine = a[a["player_id"] == pid].sort_values("date")
+    debut_date = mine["date"].iloc[0] if len(mine) else None
+    return (whole_age(bd, pd.Timestamp.today().normalize()), int(by) if pd.notna(by) else None,
+            whole_age(bd, debut_date) if debut_date else None, debut_date)
+
+
+@st.cache_data(show_spinner=False, max_entries=80)
+def team_ages(lo, hi):
+    """Per franchise in the chosen seasons: average age on match day (every appearance counts once),
+    players used, overseas players, and overseas share of appearances."""
+    a = in_seasons(appearances(), lo, hi)
+    g = a.groupby("team").agg(avg_age=("age", "mean"), players=("player_id", "nunique"),
+                              apps=("player_id", "size"), os_apps=("overseas", "sum")).reset_index()
+    os_players = a[a["overseas"] == 1].groupby("team")["player_id"].nunique()
+    g["os_players"] = g["team"].map(os_players).fillna(0).astype(int)
+    g["os_pct"] = div(g["os_apps"], g["apps"], 100)
+    return g
+
+
+@st.cache_data(show_spinner=False, max_entries=80)
+def team_season_ages(team, lo, hi):
+    """One franchise by season: average, youngest and oldest age on match day, players, overseas players."""
+    a = in_seasons(appearances(), lo, hi)
+    a = a[a["team"] == team]
+    g = a.groupby("season").agg(avg_age=("age", "mean"), youngest=("age", "min"), oldest=("age", "max"),
+                                players=("player_id", "nunique"), apps=("player_id", "size"),
+                                os_apps=("overseas", "sum")).reset_index()
+    g["os_players"] = g["season"].map(a[a["overseas"] == 1].groupby("season")["player_id"].nunique()).fillna(0).astype(int)
+    g["os_pct"] = div(g["os_apps"], g["apps"], 100)
+    return g.sort_values("season", ascending=False)
+
+
+@st.cache_data(show_spinner=False, max_entries=80)
+def age_extremes(lo, hi, team=None, n=10):
+    """(youngest, oldest, debuts) in the chosen seasons, optionally for one franchise. Youngest and oldest:
+    each player once, at his youngest (or oldest) match. Debuts: age at the first PSL match, for players
+    whose PSL debut falls in the chosen seasons. Pages show ages in years to one decimal with the season,
+    never with days or a match date, so a birth date cannot be worked back."""
+    a = appearances().dropna(subset=["age"])
+    first = a.sort_values("date").drop_duplicates("player_id")
+    a = in_seasons(a, lo, hi)
+    first = in_seasons(first, lo, hi)
+    if team:
+        a, first = a[a["team"] == team], first[first["team"] == team]
+    young = a.sort_values("age").drop_duplicates("player_id").head(n)
+    old = a.sort_values("age", ascending=False).drop_duplicates("player_id").head(n)
+    return young, old, first.sort_values("age")
+
+
+@st.cache_data(show_spinner=False, max_entries=40)
+def age_curve(lo, hi):
+    """PSL by age band on match day: batting (balls faced, strike rate, Total per 100 balls) and bowling
+    (legal balls, economy, Total per 100 balls). Balls of players with no known age are left out."""
+    b = in_seasons(balls(), lo, hi)
+    bd = players()["birth_date"]
+    rows = []
+    for role, pcol, n, r, v1, v2 in (("bat", "batter_id", "faced", "batsman_runs", "bat_raa", "bat_wv"),
+                                     ("bowl", "bowler_id", "legal", "conceded", "bowl_raa", "bowl_wv")):
+        k = b[[pcol, "date", n, r, v1, v2]].copy()
+        k["band"] = age_band(age_years(k[pcol].map(bd), k["date"]))
+        k = k[k["band"].notna()]
+        k["val"] = k[v1].fillna(0) + k[v2].fillna(0)
+        g = k.groupby("band").agg(balls=(n, "sum"), runs=(r, "sum"), total=("val", "sum"),
+                                  players=(pcol, "nunique")).reset_index()
+        g["role"] = role
+        rows.append(g)
+    g = pd.concat(rows)
+    g["rate"] = np.where(g["role"] == "bat", div(g["runs"], g["balls"], 100), div(g["runs"], g["balls"], 6))
+    g["per100"] = div(g["total"], g["balls"], 100)
+    g["order"] = g["band"].map({lab: i for i, (_, _, lab) in enumerate(AGE_BANDS)})
+    return g.sort_values(["role", "order"])
+
+
+@st.cache_data(show_spinner=False, max_entries=80)
+def overseas_value(lo, hi):
+    """Per franchise: Total (batting plus bowling) from overseas and local players, their balls (faced plus
+    bowled) and Total per 100 balls. Players of unknown country are left out."""
+    v = pd.concat([in_seasons(value("value_bat"), lo, hi), in_seasons(value("value_bowl"), lo, hi)])
+    v["overseas"] = v["player_id"].map(players()["overseas"])
+    v = v[v["overseas"].notna()]
+    g = v.groupby(["team", "overseas"]).agg(total=("total", "sum"), balls=("balls", "sum")).unstack(fill_value=0)
+    out = pd.DataFrame({"team": g.index,
+                        "os_total": g[("total", 1)].values if ("total", 1) in g else 0.0,
+                        "local_total": g[("total", 0)].values if ("total", 0) in g else 0.0,
+                        "os_balls": g[("balls", 1)].values if ("balls", 1) in g else 0,
+                        "local_balls": g[("balls", 0)].values if ("balls", 0) in g else 0})
+    out["os_per100"] = div(out["os_total"], out["os_balls"], 100)
+    out["local_per100"] = div(out["local_total"], out["local_balls"], 100)
+    out["os_ball_pct"] = div(out["os_balls"], out["os_balls"] + out["local_balls"], 100)
+    return out.reset_index(drop=True)
 
 
 # ------------------------------------------------------------------ one match (Player > Matches)
@@ -2316,3 +2528,587 @@ def compare_table(rows, a_label, b_label, better=None):
                                                       + (st.session_state.get("_x_section") or "Compare"))
         _save_button(lambda: table_png(t, sub, credits, ["", a_label, b_label], cells, [False, True, True]),
                      key, fname)
+
+
+# ------------------------------------------------------------------ Phase B (2026-11-08): Insights scouting views
+# Pitch map, bowler zones, shots, "where to bowl" and day/night read the private aggregate tables b_pm, b_shot,
+# b_zone, b_dn_league and b_dn_team (tools/build_insights.py). Every number shows its ball count; a cell or row
+# under MIN_BALLS shows no rate ("not enough balls"); under SMALL_BALLS its rate is flagged as a small sample.
+MIN_BALLS = 30
+SMALL_BALLS = 60
+SMALL_MATCHES = 5            # day/night and toss rows with fewer matches are flagged
+SMALL_MARK = "*"
+B_TABLES = ("b_pm", "b_shot", "b_zone", "b_dn_league", "b_dn_team")
+LL_SEASONS = (2018, 2020, 2021, 2022, 2023, 2024, 2025, 2026)     # seasons with line, length and shot data
+LENGTH_LABELS = {"YORKER": "Yorker", "FULL_TOSS": "Full toss", "FULL": "Full", "GOOD_LENGTH": "Good length",
+                 "SHORT_OF_A_GOOD_LENGTH": "Short of a length", "SHORT": "Short"}
+LINE_LABELS = {"WIDE_OUTSIDE_OFFSTUMP": "Wide outside off", "OUTSIDE_OFFSTUMP": "Outside off",
+               "ON_THE_STUMPS": "On the stumps", "DOWN_LEG": "Down leg", "WIDE_DOWN_LEG": "Wide down leg"}
+SHOT_LABELS = {"FLICK": "Flick", "ON_DRIVE": "On drive", "COVER_DRIVE": "Cover drive", "PULL": "Pull",
+               "CUT_SHOT": "Cut", "DEFENDED": "Defended", "PUSH": "Push", "SLOG_SHOT": "Slog",
+               "STEERED": "Steer", "LEFT_ALONE": "Left alone", "SQUARE_DRIVE": "Square drive",
+               "STRAIGHT_DRIVE": "Straight drive", "SWEEP_SHOT": "Sweep", "SLOG_SWEEP": "Slog sweep",
+               "LEG_GLANCE": "Leg glance", "DAB": "Dab", "REVERSE_SWEEP": "Reverse sweep", "HOOK": "Hook",
+               "UPPER_CUT": "Upper cut", "PADDLE_SWEEP": "Paddle sweep", "RAMP": "Ramp", "LATE_CUT": "Late cut",
+               "REVERSE_SCOOP": "Reverse scoop", "REVERSE_PULL": "Reverse pull"}
+DAYNIGHT = ["Day", "Day/night", "Night"]
+PM_SUM = ["deliveries", "balls", "runs", "outs", "dots", "fours", "sixes", "ctl_n", "ctl_yes"]
+
+
+def insights_has(*tables):
+    """True if the private aggregate file has these tables (an older published file may not)."""
+    if not insights_available():
+        return False
+    have = set(insights("SELECT name FROM sqlite_master WHERE type = 'table'")["name"])
+    return set(tables) <= have
+
+
+# Why a PSL season has no line and length data (decided when tools/build_insights.py chose its seasons).
+# Which seasons are covered, left out or partial is read from the data below, never from this list.
+LL_LEFT_OUT = {2016: "no line and length data", 2017: "no line and length data", 2019: "too little"}
+LL_PARTIAL = 0.9     # a covered season is "partial" when under 90% of its balls faced have a line and length
+
+
+def season_runs(seasons):
+    """(2018, 2020, 2021, ..., 2026) -> '2018 and 2020 to 2026'."""
+    runs = []
+    for s in sorted(seasons):
+        if runs and s == runs[-1][1] + 1:
+            runs[-1][1] = s
+        else:
+            runs.append([s, s])
+    parts = [str(a) if a == b else (f"{a} and {b}" if b == a + 1 else f"{a} to {b}") for a, b in runs]
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1] if parts else ""
+
+
+@st.cache_data(show_spinner=False)
+def ll_coverage():
+    """Seasons of the Insights data, read from the files: covered (in agg), left out (PSL seasons not in agg,
+    with their reason) and partial (balls faced with a line and length under LL_PARTIAL of Cricsheet's)."""
+    if not insights_available():
+        return None
+    got = insights("SELECT season, SUM(balls) AS n FROM agg WHERE player_id = 'ALL' AND role = 'bat' "
+                   "AND dim = 'length' GROUP BY season").set_index("season")["n"]
+    faced = query("SELECT m.season, COUNT(*) AS n FROM deliveries d JOIN matches m ON m.match_id = d.match_id "
+                  "WHERE d.inning IN (1, 2) AND COALESCE(d.extras_type, '') NOT LIKE '%wides%' "
+                  "GROUP BY m.season").set_index("season")["n"]
+    covered = tuple(int(s) for s in sorted(got.index))
+    left = tuple(int(s) for s in faced.index if int(s) not in covered)
+    partial = tuple(s for s in covered if s in faced.index and got[s] < LL_PARTIAL * faced[s])
+    return {"covered": covered, "left_out": left, "partial": partial}
+
+
+def ll_seasons_text(detail=False):
+    """'PSL 2018 and 2020 to 2026', and with detail the left-out and partial seasons in brackets."""
+    cov = ll_coverage()
+    if not cov or not cov["covered"]:
+        return ""
+    out = f"PSL {season_runs(cov['covered'])}"
+    if not detail:
+        return out
+    bits, groups = [], {}
+    for s in cov["left_out"]:
+        groups.setdefault(LL_LEFT_OUT.get(s, "no line and length data"), []).append(s)
+    for why, ss in groups.items():
+        bits.append(f"{season_runs(ss)} {'has' if len(ss) == 1 else 'have'} {why}")
+    if cov["partial"]:
+        bits.append(f"{season_runs(cov['partial'])} {'is' if len(cov['partial']) == 1 else 'are'} partial")
+    return out + (f" ({', '.join(bits)})" if bits else "")
+
+
+def sample_rate(value, balls, nd=1, suffix=""):
+    """A rate as shown in a cell: blank under MIN_BALLS, flagged with SMALL_MARK under SMALL_BALLS."""
+    if balls is None or pd.isna(balls) or balls < MIN_BALLS or value is None or pd.isna(value):
+        return ""
+    return f"{value:,.{nd}f}{suffix}" + (SMALL_MARK if balls < SMALL_BALLS else "")
+
+
+def sample_label(balls):
+    """Sample column text: 'Not enough balls' under MIN_BALLS, 'Small' under SMALL_BALLS, else ''."""
+    b = np.asarray(balls, dtype=float)
+    return np.where(b < MIN_BALLS, "Not enough balls", np.where(b < SMALL_BALLS, "Small", ""))
+
+
+def masked(values, balls, minimum=MIN_BALLS):
+    """Rates with NaN where the balls behind them are under the minimum (a table shows them blank)."""
+    return np.where(np.asarray(balls, dtype=float) >= minimum, np.asarray(values, dtype=float), np.nan)
+
+
+def b_filter(df, kind="all", phase=0, seasons=None, pid=None):
+    if seasons is not None:
+        df = df[df["season"].isin(list(seasons))]
+    if kind != "all":
+        df = df[df["kind"] == kind]
+    if phase:
+        df = df[df["phase"] == phase]
+    if pid is not None:
+        df = df[df["player_id"] == pid]
+    return df
+
+
+@st.cache_data(show_spinner=False)
+def b_table(table, role=None):
+    sql = f"SELECT * FROM {table}" + (" WHERE role = ?" if role else "")
+    return insights(sql, (role,) if role else ())
+
+
+def pm_rates(g, role):
+    """Rates for summed pitch map rows (balls, runs, outs, dots, fours, sixes, ctl_n, ctl_yes)."""
+    g = g.copy()
+    g["rate"] = div(g["runs"], g["balls"], 100 if role == "bat" else 6)       # strike rate or economy
+    g["per_out"] = div(g["balls"], g["outs"])                                  # balls per dismissal or wicket
+    g["out_pct"] = div(g["outs"], g["balls"], 100)
+    g["dot_pct"] = div(g["dots"], g["balls"], 100)
+    g["bdry_pct"] = div(g["fours"] + g["sixes"], g["balls"], 100)
+    g["ctl_pct"] = div(g["ctl_yes"], g["ctl_n"], 100)
+    return g
+
+
+def pm_cells(df, role):
+    """Length (rows) x line (columns) totals and rates from b_pm rows with both known."""
+    d = df.dropna(subset=["line", "length"])
+    g = d.groupby(["length", "line"])[PM_SUM].sum()
+    idx = pd.MultiIndex.from_product([list(LENGTH_LABELS), list(LINE_LABELS)], names=["length", "line"])
+    return pm_rates(g.reindex(idx, fill_value=0), role)
+
+
+def pm_by(df, role, dim):
+    """Totals and rates per length or per line (rows with that value known)."""
+    lab = LENGTH_LABELS if dim == "length" else LINE_LABELS
+    g = df.dropna(subset=[dim]).groupby(dim)[PM_SUM].sum().reindex(list(lab), fill_value=0)
+    g = pm_rates(g, role)
+    g["label"] = [lab[k] for k in g.index]
+    g["share"] = div(g["balls"], g["balls"].sum(), 100)
+    return g
+
+
+def pm_coverage(df):
+    """(% of balls with both line and length known, balls known, all balls) in b_pm rows."""
+    known = int(df.dropna(subset=["line", "length"])["balls"].sum())
+    total = int(df["balls"].sum())
+    return (known * 100 / total if total else float("nan")), known, total
+
+
+def shot_table(df):
+    """Per shot (known shots only): balls, runs, outs, dots, fours, sixes, control, with rates."""
+    d = df.dropna(subset=["shot"])
+    g = d.groupby("shot")[["balls", "runs", "outs", "dots", "fours", "sixes", "ctl_n", "ctl_yes"]].sum()
+    g = pm_rates(g, "bat")
+    g["share"] = div(g["balls"], g["balls"].sum(), 100)
+    g["label"] = [SHOT_LABELS.get(k, k.replace("_", " ").capitalize()) for k in g.index]
+    return g.sort_values("balls", ascending=False)
+
+
+def where_to_bowl(pm, lg, zones, lg_zones):
+    """The batter weakness card. pm / lg: b_pm batting rows of the batter / of all PSL batters (same filters);
+    zones / lg_zones: b_zone batting rows. Returns (cards, candidates): cards are (label, where, detail, balls);
+    candidates every length, line and line-and-length cell with balls, strike rate, dismissals and the PSL
+    figures. A candidate needs MIN_BALLS balls to be picked. Tightest = lowest strike rate; most dismissals =
+    fewest balls per dismissal (at least 2 dismissals)."""
+    rows = []
+    for what, dim in (("Length", "length"), ("Line", "line")):
+        mine, base = pm_by(pm, "bat", dim), pm_by(lg, "bat", dim)
+        for k in mine.index:
+            rows.append((what, mine.at[k, "label"], mine.at[k, "balls"], mine.at[k, "rate"], base.at[k, "rate"],
+                         mine.at[k, "outs"], mine.at[k, "per_out"], base.at[k, "per_out"]))
+    cell, base = pm_cells(pm, "bat"), pm_cells(lg, "bat")
+    for (ln, li) in cell.index:
+        rows.append(("Line and length", f"{LENGTH_LABELS[ln]}, {LINE_LABELS[li].lower()}", cell.at[(ln, li), "balls"],
+                     cell.at[(ln, li), "rate"], base.at[(ln, li), "rate"], cell.at[(ln, li), "outs"],
+                     cell.at[(ln, li), "per_out"], base.at[(ln, li), "per_out"]))
+    t = pd.DataFrame(rows, columns=["what", "where", "balls", "sr", "psl_sr", "outs", "per_out", "psl_per_out"])
+    ok = t[t["balls"] >= MIN_BALLS]
+    cards = []
+    for what in ("Length", "Line", "Line and length"):
+        o = ok[ok["what"] == what]
+        if len(o):
+            r = o.sort_values(["sr", "balls"], ascending=[True, False]).iloc[0]
+            cards.append((f"Tightest {what.lower()}", r["where"], f"SR {r['sr']:.1f} v PSL {r['psl_sr']:.1f}",
+                          int(r["balls"])))
+    o = ok[(ok["what"] == "Line and length") & (ok["outs"] >= 2)]
+    if len(o):
+        r = o.sort_values(["per_out", "balls"], ascending=[True, False]).iloc[0]
+        cards.append(("Most dismissals", r["where"],
+                      f"Out every {r['per_out']:.1f} balls v PSL {r['psl_per_out']:.1f}", int(r["balls"])))
+    z, lz = zone_shares(zones), zone_shares(lg_zones)
+    if z["balls"].sum() >= MIN_BALLS and z["runs"].sum() > 0:
+        top = z["runs_share"].idxmax()
+        cards.append(("Scores most to", ZONES[top],
+                      f"{z.at[top, 'runs_share']:.1f}% of his runs v PSL {lz.at[top, 'runs_share']:.1f}%",
+                      int(z["balls"].sum())))
+        if z["caught"].sum() >= 2:
+            cz = z["caught"].idxmax()
+            cards.append(("Caught most at", ZONES[cz], f"{int(z.at[cz, 'caught'])} of {int(z['caught'].sum())} catches",
+                          int(z["balls"].sum())))
+    return cards, t
+
+
+@st.cache_data(show_spinner=False, max_entries=40)
+def daynight_summary(seasons):
+    """League by day, day/night and night: results, toss and innings totals (b_dn_league)."""
+    d = b_table("b_dn_league")
+    d = d[d["season"].isin(list(seasons))]
+    g = d.groupby("daynight")[["matches", "decided", "bat_first_won", "toss_winner_won", "toss_field",
+                               "inns1_runs", "inns1_n", "inns2_runs", "inns2_n"]].sum()
+    g = g.reindex([x for x in DAYNIGHT if x in g.index])
+    g["bat_first_pct"] = div(g["bat_first_won"], g["decided"], 100)
+    g["toss_won_pct"] = div(g["toss_winner_won"], g["decided"], 100)
+    g["field_pct"] = div(g["toss_field"], g["matches"], 100)
+    g["avg1"] = div(g["inns1_runs"], g["inns1_n"])
+    g["avg2"] = div(g["inns2_runs"], g["inns2_n"])
+    return g
+
+
+@st.cache_data(show_spinner=False, max_entries=40)
+def daynight_teams(seasons):
+    """Per franchise and day/night label: matches, decided, won, win % (b_dn_team)."""
+    d = b_table("b_dn_team")
+    d = d[d["season"].isin(list(seasons))]
+    g = d.groupby(["team", "daynight"])[["matches", "decided", "won", "toss_won"]].sum().reset_index()
+    g["win_pct"] = div(g["won"], g["decided"], 100)
+    return g
+
+
+# ------------------------------------------------------------------ toss (Teams > Toss; Cricsheet, every season)
+def _toss_frame(lo, hi):
+    m = in_seasons(matches(), lo, hi).copy()
+    w = m["winner"].fillna("")
+    other = np.where(m["toss_winner"] == m["team1"], m["team2"], m["team1"])
+    m["bat_first"] = np.where(m["toss_decision"] == "bat", m["toss_winner"], other)
+    m["decided"] = w != ""
+    m["w"] = w
+    return m
+
+
+@st.cache_data(show_spinner=False, max_entries=80)
+def toss_league(lo, hi):
+    """Per season: matches, decided (a winner; ties and no results have none), toss winner won, chose to field,
+    team batting first won (batting first from the toss winner and decision), with rates."""
+    m = _toss_frame(lo, hi)
+    m["toss_won"] = m["decided"] & (m["w"] == m["toss_winner"])
+    m["field"] = m["toss_decision"] == "field"
+    m["bf_won"] = m["decided"] & (m["w"] == m["bat_first"])
+    g = m.groupby("season").agg(matches=("match_id", "size"), decided=("decided", "sum"), toss_won=("toss_won", "sum"),
+                                field=("field", "sum"), bf_won=("bf_won", "sum")).reset_index()
+    return toss_rates(g)
+
+
+def toss_rates(g):
+    g = g.copy()
+    g["toss_won_pct"] = div(g["toss_won"], g["decided"], 100)
+    g["field_pct"] = div(g["field"], g["matches"], 100)
+    g["bf_pct"] = div(g["bf_won"], g["decided"], 100)
+    return g
+
+
+@st.cache_data(show_spinner=False, max_entries=80)
+def toss_teams(lo, hi):
+    """Per franchise: matches, tosses won, chose to field after winning it, win % after winning and after losing
+    the toss, and win % batting first and chasing (decided matches only)."""
+    m = _toss_frame(lo, hi)
+    rows = []
+    for team in sorted(set(m["team1"]) | set(m["team2"])):
+        t = m[(m["team1"] == team) | (m["team2"] == team)]
+        dec, won = t["decided"], t["w"] == team
+        tw, bf = t["toss_winner"] == team, t["bat_first"] == team
+        rows.append({"team": team, "matches": len(t), "tosses": int(tw.sum()),
+                     "field": int((tw & (t["toss_decision"] == "field")).sum()),
+                     "dec_tw": int((dec & tw).sum()), "won_tw": int((dec & tw & won).sum()),
+                     "dec_tl": int((dec & ~tw).sum()), "won_tl": int((dec & ~tw & won).sum()),
+                     "dec_bf": int((dec & bf).sum()), "won_bf": int((dec & bf & won).sum()),
+                     "dec_ch": int((dec & ~bf).sum()), "won_ch": int((dec & ~bf & won).sum())})
+    g = pd.DataFrame(rows, columns=["team", "matches", "tosses", "field", "dec_tw", "won_tw", "dec_tl", "won_tl",
+                                    "dec_bf", "won_bf", "dec_ch", "won_ch"])
+    g["toss_pct"] = div(g["tosses"], g["matches"], 100)
+    g["field_pct"] = div(g["field"], g["tosses"], 100)
+    for k in ("tw", "tl", "bf", "ch"):
+        g[f"win_{k}"] = div(g[f"won_{k}"], g[f"dec_{k}"], 100)
+    return g
+
+
+# ------------------------------------------------------------------ Phase C (owner's decisions 2026-11-09)
+# Fielding by team, partnerships by wicket and the collapse index, extras and discipline, batting entry
+# situation and dismissal profile. All from Cricsheet (psl.sqlite), innings 1 and 2 only, by the CLAUDE.md
+# rules; identity merges are already applied in psl.sqlite. Checked against MySQL by tools/audit_phase_c.py
+# and in tests/app_checks.py phase_c().
+SMALL_INNS = 10              # innings, stands or dismissals behind a row: under this it is flagged "Small"
+MIN_INNS = 5                 # under this a rate is blank ("not enough innings")
+COLLAPSE_WKTS, COLLAPSE_RUNS = 3, 20     # a collapse: 3 wickets for 20 runs or fewer (see collapse_innings)
+DISMISSAL_ORDER = ["Caught", "Caught and bowled", "Bowled", "LBW", "Run out", "Stumped", "Other"]
+_DISMISSAL_NAME = {"caught": "Caught", "caught and bowled": "Caught and bowled", "bowled": "Bowled",
+                   "lbw": "LBW", "run out": "Run out", "stumped": "Stumped"}
+ROLE_BANDS = [(1, 2, "Opener (1 or 2)"), (3, 3, "Number 3"), (4, 5, "Numbers 4 and 5"), (6, 7, "Numbers 6 and 7"),
+              (8, 11, "Numbers 8 to 11")]     # by position number, so they never clash with POSITION_GROUPS
+ENTRY_WKTS = [(0, 0, "0 down"), (1, 2, "1 or 2 down"), (3, 4, "3 or 4 down"), (5, 10, "5 or more down")]
+ENTRY_PHASES = ["Powerplay", "Middle overs", "Death overs"]
+
+
+def wicket_label(n):
+    return {1: "1st", 2: "2nd", 3: "3rd"}.get(int(n), f"{int(n)}th")
+
+
+def count_label(n, small=SMALL_INNS, minimum=MIN_INNS, unit="innings"):
+    """Sample column for counts of innings, stands or dismissals."""
+    n = np.asarray(n, dtype=float)
+    return np.where(n < minimum, f"Not enough {unit}", np.where(n < small, "Small", ""))
+
+
+@st.cache_data(show_spinner=False)
+def progress():
+    """Every ball of innings 1 and 2 with the batting side's score, wickets and balls after it. A wicket is
+    any dismissal except retired hurt and retired not out (run outs and retired out count)."""
+    b = query("""SELECT d.match_id, m.season, d.inning, d.delivery_no, d.batting_team, d.bowling_team,
+                        d.batter_id, d.batsman_runs, d.extra_runs, d.total_runs,
+                        COALESCE(d.extras_type, '') extras_type, COALESCE(d.dismissal_kind, '') kind,
+                        COALESCE(d.player_dismissed_id, '') player_dismissed_id
+                 FROM deliveries d JOIN matches m USING (match_id) WHERE d.inning IN (1, 2)""")
+    b = b.sort_values(["match_id", "inning", "delivery_no"]).reset_index(drop=True)
+    wide = b["extras_type"].str.contains("wides")
+    nb = b["extras_type"].str.contains("noballs")
+    b["faced"] = ~wide
+    b["legal"] = ~wide & ~nb
+    b["wkt"] = b["player_dismissed_id"].ne("") & ~b["kind"].isin(NOT_OUT_KINDS)
+    g = b.groupby(["match_id", "inning"], sort=False)
+    b["score"] = g["total_runs"].cumsum()
+    b["wkts"] = g["wkt"].cumsum()
+    b["legal_n"] = g["legal"].cumsum()
+    b["faced_n"] = g["faced"].cumsum()
+    return b
+
+
+@st.cache_data(show_spinner=False)
+def innings_totals():
+    """One row per innings: batting and bowling side, runs, wickets, legal balls, balls faced."""
+    return progress().groupby(["match_id", "inning"], sort=False).agg(
+        season=("season", "first"), team=("batting_team", "first"), opp=("bowling_team", "first"),
+        runs=("total_runs", "sum"), wkts=("wkt", "sum"), legal=("legal", "sum"), faced=("faced", "sum")).reset_index()
+
+
+@st.cache_data(show_spinner=False)
+def fall_of_wickets():
+    """One row per wicket: the score, wicket number and balls faced when it fell (after that ball)."""
+    b = progress()
+    w = b[b["wkt"]][["match_id", "season", "inning", "batting_team", "bowling_team", "delivery_no", "score",
+                     "wkts", "faced_n", "legal_n"]]
+    return w.rename(columns={"batting_team": "team", "bowling_team": "opp", "wkts": "wkt_no"}).reset_index(drop=True)
+
+
+@st.cache_data(show_spinner=False)
+def stands_by_wicket():
+    """One row per stand by wicket: the nth-wicket stand runs from the fall of wicket n-1 to wicket n (team
+    runs, extras included; balls faced, wides not counted). The last stand of an innings is unbroken
+    (ended False) unless ten wickets fell; an unbroken stand with no ball faced and no run is left out."""
+    w, inn = fall_of_wickets(), innings_totals()
+    prev = w.groupby(["match_id", "inning"], sort=False)
+    s = pd.DataFrame({"match_id": w["match_id"], "inning": w["inning"], "wicket": w["wkt_no"].astype(int),
+                      "runs": w["score"] - prev["score"].shift(fill_value=0),
+                      "balls": w["faced_n"] - prev["faced_n"].shift(fill_value=0), "ended": True})
+    last = prev.agg(score=("score", "last"), faced_n=("faced_n", "last"), n=("wkt_no", "last"))
+    t = inn.set_index(["match_id", "inning"]).join(last)
+    t[["score", "faced_n", "n"]] = t[["score", "faced_n", "n"]].fillna(0)
+    t = t[t["n"] < 10].reset_index()
+    u = pd.DataFrame({"match_id": t["match_id"], "inning": t["inning"], "wicket": t["n"].astype(int) + 1,
+                      "runs": t["runs"] - t["score"], "balls": t["faced"] - t["faced_n"], "ended": False})
+    u = u[(u["runs"] > 0) | (u["balls"] > 0)]
+    s = pd.concat([s, u], ignore_index=True)
+    s[["runs", "balls"]] = s[["runs", "balls"]].astype(int)
+    return s.merge(inn[["match_id", "inning", "season", "team", "opp"]], on=["match_id", "inning"])
+
+
+def stand_table(s):
+    """Stands summed by wicket: stands, runs, balls, average (runs per stand that ended), run rate, best, 50+."""
+    g = s.groupby("wicket").agg(stands=("runs", "size"), ended=("ended", "sum"), runs=("runs", "sum"),
+                                balls=("balls", "sum"), best=("runs", "max"),
+                                fifty=("runs", lambda r: int((r >= 50).sum()))).reindex(range(1, 11))
+    g = g.fillna(0).astype(int)
+    g["avg"] = div(g["runs"], g["ended"])
+    g["rr"] = div(g["runs"], g["balls"], 6)
+    return g
+
+
+@st.cache_data(show_spinner=False)
+def collapse_innings():
+    """Per innings: True when it had a collapse, COLLAPSE_WKTS wickets for COLLAPSE_RUNS runs or fewer, counted
+    from the score at the wicket before the first of them (0 at the start): 80/2 to 100/5 is 3 for 20."""
+    w, inn = fall_of_wickets(), innings_totals()
+    hit = set()
+    for (mid, i), g in w.groupby(["match_id", "inning"], sort=False):
+        sc = [0] + [int(x) for x in g["score"]]
+        if any(sc[k + COLLAPSE_WKTS] - sc[k] <= COLLAPSE_RUNS for k in range(len(sc) - COLLAPSE_WKTS)):
+            hit.add((mid, i))
+    t = inn[["match_id", "inning", "season", "team", "opp"]].copy()
+    t["collapse"] = [(m, i) in hit for m, i in zip(t["match_id"], t["inning"])]
+    return t
+
+
+def collapse_index(lo, hi):
+    """Per franchise: innings batted and % with a collapse; innings bowled and % where it caused one."""
+    t = in_seasons(collapse_innings(), lo, hi)
+    bat = t.groupby("team").agg(inns=("collapse", "size"), coll=("collapse", "sum"))
+    bowl = t.groupby("opp").agg(inns_b=("collapse", "size"), caused=("collapse", "sum"))
+    g = bat.join(bowl, how="outer").fillna(0).astype(int)
+    g["coll_pct"] = div(g["coll"], g["inns"], 100)
+    g["caused_pct"] = div(g["caused"], g["inns_b"], 100)
+    return g
+
+
+@st.cache_data(show_spinner=False, max_entries=80)
+def team_extras(lo, hi):
+    """Extras given away per bowling side and season: wides and no-balls (balls and runs), byes, leg byes,
+    penalty runs, all extras. No-ball runs follow the CLAUDE.md rule (a no-ball with byes or leg byes: 1 run,
+    the rest are byes or leg byes)."""
+    b = in_seasons(progress(), lo, hi)
+    ext, x = b["extras_type"], b["extra_runs"]
+    wide, nb = ext.str.contains("wides"), ext.str.contains("noballs")
+    lbye = ext.str.contains("legbyes")
+    bye = ext.str.contains("byes") & ~lbye
+    nbi = nb.astype(int)
+    d = pd.DataFrame({"team": b["bowling_team"], "season": b["season"], "match_id": b["match_id"],
+                      "legal": b["legal"].astype(int), "wides": wide.astype(int), "wide_runs": np.where(wide, x, 0),
+                      "noballs": nbi, "nb_runs": np.where(nb & (bye | lbye), 1, np.where(nb, x, 0)),
+                      "byes": np.where(bye, x - nbi, 0), "legbyes": np.where(lbye, x - nbi, 0),
+                      "penalty": np.where(ext.str.contains("penalty"), x, 0), "extras": x})
+    return d.groupby(["team", "season"]).agg(matches=("match_id", "nunique"), **{
+        k: (k, "sum") for k in ("legal", "wides", "wide_runs", "noballs", "nb_runs", "byes", "legbyes", "penalty",
+                                "extras")}).reset_index()
+
+
+def extras_rates(g):
+    """Per match and per 100 legal balls (matches: bowling innings in the chosen seasons)."""
+    g = g.copy()
+    for k in ("wides", "noballs", "extras"):
+        g[f"{k}_pm"] = div(g[k], g["matches"])
+    g["byes_pm"] = div(g["byes"] + g["legbyes"], g["matches"])
+    g["wides_100"] = div(g["wides"], g["legal"], 100)
+    g["noballs_100"] = div(g["noballs"], g["legal"], 100)
+    return g
+
+
+@st.cache_data(show_spinner=False, max_entries=80)
+def fielding_credits(lo, hi):
+    """One row per fielding credit (player, fielding side, season, ct / ro / st), by the same rules as
+    fielding_table: catches include wicketkeepers and caught and bowled (the bowler), a run out credits
+    every fielder named in it. Returns (rows, fielder names not matched)."""
+    d = query(f"""SELECT d.match_id, m.season, d.bowling_team team, d.dismissal_kind kind, d.fielder, d.bowler_id
+                  {_REC_BASE} AND d.dismissal_kind IN ('caught', 'caught and bowled', 'run out', 'stumped')""",
+              (lo, hi))
+    rows, unresolved, find_fielder = [], 0, _fielder_lookup()
+    what = {"caught": "ct", "run out": "ro", "stumped": "st"}
+    for r in d.itertuples(index=False):
+        if r.kind == "caught and bowled":
+            rows.append((r.bowler_id, r.team, r.season, "ct"))
+            continue
+        names = str(r.fielder or "").split(",")
+        for nm in (names if r.kind == "run out" else names[:1]):
+            if not nm.strip():
+                continue
+            pid = find_fielder(r.match_id, r.team, r.season, nm)
+            if pid is None:
+                unresolved += 1
+            else:
+                rows.append((pid, r.team, r.season, what[r.kind]))
+    return pd.DataFrame(rows, columns=["pid", "team", "season", "what"]), unresolved
+
+
+def team_fielding(lo, hi, team):
+    """One franchise's fielders: catches, run outs, stumpings, dismissals and matches for that franchise."""
+    f = fielding_credits(lo, hi)[0]
+    f = f[f["team"] == team]
+    t = f.groupby(["pid", "what"]).size().unstack(fill_value=0).reindex(columns=["ct", "ro", "st"], fill_value=0)
+    t["dis"] = t[["ct", "ro", "st"]].sum(axis=1)
+    mat = query("""SELECT x.player_id pid, COUNT(DISTINCT x.match_id) mat FROM match_players x JOIN matches m
+                   USING (match_id) WHERE x.team = ? AND m.season BETWEEN ? AND ? GROUP BY 1""",
+                (team, lo, hi)).set_index("pid")["mat"]
+    t["mat"] = t.index.map(mat).fillna(0).astype(int)
+    t["per_match"] = masked(div(t["dis"], t["mat"]), t["mat"], SMALL_MATCHES)
+    return t.sort_values(["dis", "mat"], ascending=[False, True])
+
+
+def dismissal_name(kind):
+    return _DISMISSAL_NAME.get(str(kind), "Other")
+
+
+@st.cache_data(show_spinner=False, max_entries=80)
+def psl_dismissals(lo, hi):
+    """Every PSL dismissal in the seasons (retired hurt and retired not out left out), by type."""
+    b = in_seasons(progress(), lo, hi)
+    return b.loc[b["wkt"], "kind"].map(dismissal_name).value_counts().reindex(DISMISSAL_ORDER, fill_value=0)
+
+
+@st.cache_data(show_spinner=False, max_entries=200)
+def dismissal_profile(pid, lo, hi):
+    """His dismissals by type (as striker or non-striker) with the share of each and the PSL share."""
+    b = in_seasons(balls_for(pid), lo, hi)
+    mine = b[(b["player_dismissed_id"] == pid) & b["out_any"]]["dismissal_kind"].map(dismissal_name)
+    t = pd.DataFrame({"n": mine.value_counts().reindex(DISMISSAL_ORDER, fill_value=0)})
+    psl = psl_dismissals(lo, hi)
+    t["share"] = div(t["n"], t["n"].sum(), 100)
+    t["psl"] = div(psl, psl.sum(), 100)
+    return t
+
+
+@st.cache_data(show_spinner=False, max_entries=200)
+def entry_innings(pid, lo, hi):
+    """Each innings he batted: position, the score, wickets and legal balls when he came in (before his first
+    ball at either end), his runs, balls faced and whether he was out in it."""
+    bp = query("""SELECT bp.match_id, bp.inning, bp.position, bp.first_delivery_no, m.season
+                  FROM batting_positions bp JOIN matches m USING (match_id)
+                  WHERE bp.player_id = ? AND bp.inning IN (1, 2) AND m.season BETWEEN ? AND ?""", (pid, lo, hi))
+    if bp.empty:
+        return bp
+    pr = progress().set_index(["match_id", "inning", "delivery_no"])
+    at = pr.loc[list(zip(bp["match_id"], bp["inning"], bp["first_delivery_no"]))]
+    bp["score_in"] = (at["score"] - at["total_runs"]).values
+    bp["wkts_in"] = (at["wkts"] - at["wkt"]).values
+    bp["legal_in"] = (at["legal_n"] - at["legal"]).values
+    b = balls_for(pid)
+    me = b[b["batter_id"] == pid].groupby(["match_id", "inning"]).agg(runs=("batsman_runs", "sum"),
+                                                                       balls=("faced", "sum"))
+    out = b[(b["player_dismissed_id"] == pid) & b["out_any"]].groupby(["match_id", "inning"]).size()
+    key = pd.MultiIndex.from_arrays([bp["match_id"], bp["inning"]])
+    bp["runs"] = me["runs"].reindex(key).fillna(0).astype(int).values
+    bp["balls"] = me["balls"].reindex(key).fillna(0).astype(int).values
+    bp["out"] = out.reindex(key).fillna(0).astype(int).values > 0
+    return bp
+
+
+def entry_group(e, by):
+    """Label per innings: wickets down when he came in, or the phase (legal balls bowled before he came in)."""
+    if by == "wkts":
+        return pd.Series(np.select([e["wkts_in"].between(a, z) for a, z, _ in ENTRY_WKTS],
+                                   [n for *_, n in ENTRY_WKTS], ""), index=e.index), [n for *_, n in ENTRY_WKTS]
+    return pd.Series(np.select([e["legal_in"] < 36, e["legal_in"] < 90], ENTRY_PHASES[:2], ENTRY_PHASES[2]),
+                     index=e.index), ENTRY_PHASES
+
+
+def entry_table(e, by):
+    """Entry innings grouped: innings, runs, balls, outs, strike rate, average, average score and balls in."""
+    lab, order = entry_group(e, by)
+    g = e.assign(lab=lab).groupby("lab").agg(inns=("runs", "size"), runs=("runs", "sum"), balls=("balls", "sum"),
+                                             outs=("out", "sum"), score=("score_in", "mean"),
+                                             legal=("legal_in", "mean")).reindex(order).dropna(subset=["inns"])
+    g[["inns", "runs", "balls", "outs"]] = g[["inns", "runs", "balls", "outs"]].astype(int)
+    g["sr"] = div(g["runs"], g["balls"], 100)
+    g["avg"] = div(g["runs"], g["outs"])
+    return g
+
+
+@st.cache_data(show_spinner=False, max_entries=200)
+def entry_summary(pid, lo, hi):
+    """Cached for the Player page: (entry innings, by wickets down, by phase, (role, n, innings))."""
+    e = entry_innings(pid, lo, hi)
+    if e.empty:
+        return e, None, None, (None, 0, 0)
+    return e, entry_table(e, "wkts"), entry_table(e, "phase"), batting_role(e)
+
+
+def batting_role(e):
+    """His usual role from his batting positions: the band he batted in most often. Returns (label, innings
+    in that band, all innings); 'Mixed' when no band has at least half his innings."""
+    if e.empty:
+        return None, 0, 0
+    band = pd.Series(np.select([e["position"].between(a, z) for a, z, _ in ROLE_BANDS],
+                               [n for *_, n in ROLE_BANDS], ROLE_BANDS[-1][2]))
+    vc = band.value_counts()
+    top, n = vc.index[0], int(vc.iloc[0])
+    return (top if n * 2 >= len(e) else f"Mixed (most often {top})"), n, len(e)

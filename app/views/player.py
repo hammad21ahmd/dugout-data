@@ -35,20 +35,34 @@ bowl = b[b["bowler_id"] == pid]
 dism = b[(b["player_dismissed_id"] == pid) & b["out_any"]]
 
 # ------------------------------------------------------------------ player header
-hand, style, src, hs, ss = p.loc[pid, ["batting_hand", "bowling_style", "source_url", "hand_source", "style_source"]]
-style_bits = [f"{hand}-hand bat" if isinstance(hand, str) else None, style if isinstance(style, str) else None]
-style_txt = " | ".join(x for x in style_bits if x)
-# Source of each shown value: a Wikipedia link for public-source values, plain text for developer verified
-shown = [s for v, s in ((hand, hs), (style, ss)) if isinstance(v, str)]
-src_bits = ([f'<a href="{html.escape(src)}" target="_blank">Wikipedia</a>']
-            if isinstance(src, str) and any(s != "developer" for s in shown) else [])     + (["Developer verified"] if "developer" in shown else [])
-src_txt = f" Source: {', '.join(src_bits)}" if src_bits and style_txt else ""
+hand, style, fam, src, hs, ss, country = p.loc[pid, ["batting_hand", "bowling_style", "style_family", "source_url",
+                                                     "hand_source", "style_source", "country"]]
+age_now, born, debut_age, _ = c.player_ages(pid)
+# Profile line: age and birth year only (never the birth date), country, batting hand, Dugout style.
+bio_bits = [f"Age {age_now} (born {born})" if age_now is not None else None,
+            country if isinstance(country, str) else None,
+            f"{hand}-hand bat" if isinstance(hand, str) else None,
+            (f"{style} ({fam})" if isinstance(fam, str) and fam != "Pace" else style) if isinstance(style, str) else None,
+            f"PSL debut at {debut_age}" if debut_age is not None else None]
+style_txt = " | ".join(x for x in bio_bits if x)
+# Header sources: only the Wikipedia link (CC BY-SA attribution) and "Developer verified". Every other
+# source is listed once on the Method tab ("Data sources and method" link in the footer).
+used = {s for v, s in ((hand, hs), (style, ss)) if isinstance(v, str) and isinstance(s, str)}
+labels = []
+for s in ("dbpedia", "manual", "developer"):
+    if s in used:
+        lab = c.SOURCE_LABEL[s]
+        if lab == "Wikipedia":
+            lab = f'<a href="{html.escape(src)}" target="_blank">Wikipedia</a>' if isinstance(src, str) else None
+        if lab and lab not in labels:
+            labels.append(lab)
+src_txt = f" Source: {', '.join(labels)}." if labels and style_txt else ""
 teams = c.teams_latest(mine)
 seasons = sorted(mine["season"].unique())
 st.markdown(f'<p class="dd-lede"><b>{html.escape(c.name(pid))}</b></p>'
             + (f'<p class="dd-meta">{mine["match_id"].nunique()} matches, '
                f'{seasons[0] if len(seasons) == 1 else f"{seasons[0]} to {seasons[-1]}"}. '
-               f'{html.escape(style_txt) if style_txt else "Style: no public source yet."}{src_txt}</p>' if seasons else "")
+               f'{html.escape(style_txt) + "." if style_txt else "Style: no source yet."}{src_txt}</p>' if seasons else "")
             + c.team_chips(teams), unsafe_allow_html=True)
 if mine.empty:
     c.empty(f"{c.name(pid)} played no PSL matches in {c.season_label(lo, hi)}.",
@@ -207,6 +221,49 @@ with t_phase:
                                "Total": c.col_raa(help=c.HELP["Total"])})
     c.note(c.VALUE_NOTE + " Batting outs here count dismissals on strike; the career average also counts "
            "run-outs at the non-striker's end.")
+
+    # Phase C (2026-11-09): entry situation and dismissal profile, after everything above.
+    c.section("When he comes in", "The score, wickets and overs when he first came to the crease (before his first "
+                                  "ball at either end), and how he batted from there.")
+    ent, by_wkts, by_phase, (role, n_role, n_inns) = c.entry_summary(pid, lo, hi)
+    if ent.empty:
+        c.empty("Did not bat in these seasons.")
+    else:
+        few = n_inns < c.SMALL_INNS
+        c.cards(detail=True, items=[
+            ("Usual position", role if n_inns >= c.MIN_INNS else "Not enough innings",
+             f"{n_role} of {n_inns} innings" + (" (small sample)" if few else "")),
+            ("Average score when in", f"{ent['score_in'].mean():.0f}/{ent['wkts_in'].mean():.1f}",
+             f"runs/wickets, {n_inns} innings"),
+            ("Average over when in", c.fmt(ent["legal_in"].mean() / 6, 1), f"{n_inns} innings")])
+        ecfg = {"Inns": c.col_int(), "Runs": c.col_int(), "Balls": c.col_int(help="Balls faced, wides not counted"),
+                "SR": c.col_1(help=c.HELP["SR"]), "Avg": c.col_1(help=c.HELP["Avg"] + f" Blank under {c.MIN_INNS} innings."),
+                "Score when in": c.col_1(help="Average team score when he came in"),
+                "Sample": c.col_text(width="small")}
+        for g, first in ((by_wkts, "Came in at"), (by_phase, "Came in during")):
+            c.table(pd.DataFrame({first: g.index, "Inns": g["inns"].values, "Runs": g["runs"].values,
+                                  "Balls": g["balls"].values, "SR": c.masked(g["sr"], g["balls"]),
+                                  "Avg": c.masked(g["avg"], g["inns"], c.MIN_INNS),
+                                  "Score when in": g["score"].values, "Sample": c.count_label(g["inns"])}),
+                    column_config={first: c.col_text(), **ecfg})
+        c.note(f"Usual position: the band of batting positions he batted in most often (Mixed when no band has half "
+               f"his innings). SR is blank under {c.MIN_BALLS} balls. Phase when in: legal balls bowled before he came "
+               "in (Powerplay overs 1 to 6, Middle 7 to 15, Death 16 to 20).")
+    c.section("How he gets out", "Every dismissal (as striker or non-striker), retired hurt and retired not out left "
+                                 "out, against all PSL dismissals in the same seasons.")
+    dp = c.dismissal_profile(pid, lo, hi)
+    n_out = int(dp["n"].sum())
+    if n_out < c.MIN_INNS:
+        c.empty(f"Not enough dismissals for {c.name(pid)} in {c.season_label(lo, hi)} ({n_out}).",
+                f" A profile needs at least {c.MIN_INNS}. Widen the seasons.")
+    else:
+        dp = dp[(dp["n"] > 0) | (dp["psl"] >= 1)]
+        c.table(pd.DataFrame({"How out": dp.index, "Dismissals": dp["n"].values, "Share %": dp["share"].values,
+                              "PSL share %": dp["psl"].values}),
+                column_config={"How out": c.col_text(), "Dismissals": c.col_int(), "Share %": c.col_pct(),
+                               "PSL share %": c.col_pct(help="All PSL dismissals, same seasons")})
+        c.note(f"{n_out} dismissals." + (f" Small sample (under {c.SMALL_INNS})." if n_out < c.SMALL_INNS else "")
+               + " Other: hit wicket, obstructing the field, retired out.")
 
 # ------------------------------------------------------------------ against types and hands
 with t_match:

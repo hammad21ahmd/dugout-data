@@ -31,13 +31,59 @@ st.markdown(f"""
   match from 2016 to 2026: {info.get('matches', '357')} matches, {int(info.get('deliveries', 0)):,} balls.
   Data export {c.date_fmt(info.get('exported_at_utc', '')[:10])}.
 - **Players** are matched by Cricsheet player ID, never by name, so two players with the same
-  name are kept apart.
-- **Batting and bowling styles** come from Wikipedia, DBpedia and Wikidata (CC BY-SA), each with
-  its source page, or are developer verified (checked by hand by the developer, shown as
-  "Developer verified" on the player page). They cover about 98% of balls faced and 98% of
-  legal balls; players with no known source show as Unknown.
+  name are kept apart. Where two records were one person, or an ID was wrong, they were corrected
+  against ESPNcricinfo scorecards and profiles. Identity and style corrections are logged.
+- **Names:** a player's own name only. When two different people share a name, the birth year is
+  added, for example "Mohammad Irfan (b. 1982)".
+- **Overseas** players are those whose country is not Pakistan. Ages are on match day.
 - **Grounds:** different spellings of a ground are joined into one name.
 """)
+
+c.section("Data sources", "Every source used on Dugout Data. Pages do not repeat these credits; the "
+                          f'"{c.METHOD_LINK}" link at the bottom of every page leads here.')
+st.markdown(f"""
+- **Cricsheet.org** (ODC-BY licence): every ball, match, team, player ID and result, for PSL and for the
+  men's T20 baseline. All runs, wickets, RAA, Wicket Value, Total and WPA come from it.
+- **ESPNcricinfo player profiles:** age, birth year, country, batting hand and bowling style, shown only as
+  Dugout's own categories (below), never ESPNcricinfo's wording.
+- **Wikipedia, Wikidata and DBpedia** (CC BY-SA): batting hand and bowling style where ESPNcricinfo has none or
+  disagrees, and players' names. The Player page links the Wikipedia article a value came from.
+- **Developer verified:** values checked by hand by the developer, labelled "Developer verified" on the Player page.
+- **Manual:** values entered by hand from a named Wikipedia article.
+- **Inferred:** where no source has a value, the style or hand the player used most in his own PSL balls.
+
+**Source order.** Each field takes the first source that has a value: developer verified, manual,
+ESPNcricinfo profile, DBpedia/Wikidata, inferred from his PSL balls, else Unknown. When sources disagree on
+a style, the style he bowled most in PSL decides; if his balls cannot settle it, the current value stays;
+if he bowled no PSL balls, the source order decides. Both cases get confidence low and are checked by hand.
+
+**Confidence** of each value:
+- *verified*: checked by the developer.
+- *high*: entered by hand, or two sources agree.
+- *medium*: one source only, or a disagreement settled by his PSL balls.
+- *low*: a disagreement his PSL balls cannot settle (checked by hand).
+- *inferred*: from his PSL balls only.
+
+**Dugout categories.** Bowling style has three levels: the group (Pace or Spin), the family
+(Pace; Finger Spin: off-spin and left-arm orthodox; Wrist Spin: leg-spin and left-arm wrist-spin) and the
+type (Right-arm Pace, Left-arm Pace, Right-arm Off-spin, Left-arm Orthodox, Right-arm Leg-spin, Left-arm Wrist-spin). Batting
+hand is Right or Left. Players with no known style or hand show as Unknown.
+
+**Birth dates.** Pages show a player's age and birth year only. An exact date of birth is never shown or
+offered for download.
+
+**Corrections log.** Every identity, name, style and country correction (merged records, fixed IDs,
+changed styles) is kept in Dugout Data's corrections log with its evidence and date.
+""")
+if c.SHOW_INSIGHTS:
+    # The Insights page has no credit of its own (owner's decision 2026-11-09): its source is listed here in
+    # full. The seasons are read from the data (common.ll_seasons_text), never typed in.
+    ll_cover = c.ll_seasons_text(detail=True)
+    st.markdown("**ESPNcricinfo ball-by-ball records** (Insights page only). The Insights line, length, zone and "
+                "shot fields (and the control flag and each match's day or night label) come from ESPNcricinfo "
+                "ball-by-ball records; Dugout Data only adds them up per player and season."
+                + (f" They cover {ll_cover}." if ll_cover else "")
+                + " Only balls whose runs and wickets agree with Cricsheet are counted.")
 
 c.section("Counting rules")
 st.markdown("""
@@ -154,20 +200,82 @@ st.markdown("""
 - Cricsheet lists two PSL matches as not available: Peshawar Zalmi vs Karachi Kings (11 Feb 2016)
   and Multan Sultans vs Karachi Kings (2 Mar 2018). They are not included in this app.
 - Small samples swing a lot: use the minimum-balls filters.
-- Matchups depend on public styles; a bowler with no public style is left out of type tables.
+- Matchups depend on styles and hands; a bowler with no known style (or a batter with no known hand) is
+  left out of those tables.
 """)
 
 if c.SHOW_INSIGHTS:
     c.section("Insights")
     st.markdown("Line and length numbers on the Insights page are added up from ESPNcricinfo "
                 "ball-by-ball records, joined to Cricsheet ball by ball (only balls whose runs and "
-                "wickets agree are used). That data is not Dugout Data's own. "
-                f"Credit: {c.INSIGHTS_CREDIT}.")
+                "wickets agree are used). That data is not Dugout Data's own; its source is listed under "
+                "Data sources above.")
+    c.section("Insights views", "What each tab means and the seasons it covers.")
+    st.markdown(f"""
+- **Seasons covered:** line, length, shot and control: {c.ll_seasons_text(detail=True) or "none in this version"}. Scoring zones and day or night labels exist for every season, but the
+  Insights page uses the same seasons for every tab. Each view says which seasons it shows.
+- **Pitch map:** for a bowler or a batter, every length (yorker to short) against every line (wide outside off
+  to wide down leg). Bowlers: legal balls (no wides or no-balls), economy from runs conceded by the counting
+  rules above, wicket %, dot % (legal balls with nothing conceded), boundary %. Batters: balls faced (no wides),
+  strike rate, dismissal %, dot %, boundary %. Control % is the share of balls the data marks the batter as in
+  control of. The view shows how many balls have a line and length (coverage %).
+- **Bowler zones:** where batters score off a bowler: runs off the bat in eight sectors seen from behind the
+  batter (left-handers mirrored), against the PSL share in the same zone.
+- **Shots:** the shot played, as recorded in the data: balls, strike rate, dismissal % (dismissals per 100
+  balls), boundary % and control %, against all PSL batters.
+- **Where to bowl:** for a batter with at least 150 balls faced with a line and length: his tightest length,
+  line and spot (lowest strike rate), the spot where he gets out most often (at least 2 dismissals), where he
+  scores most and where he is caught most. Each pick needs at least {c.MIN_BALLS} balls.
+- **Day and night:** each match's day, day/night or night label: matches, batting first win %, toss winner
+  win %, toss winners choosing to field, average first and second innings, and each franchise's win %.
+- **Small samples:** every number shows the balls (or matches) behind it. A rate is blank under {c.MIN_BALLS}
+  balls ("not enough balls") and marked {c.SMALL_MARK} under {c.SMALL_BALLS} balls (small sample). Win % on
+  Day and night is blank under {c.SMALL_MATCHES} matches with a winner.
+""")
+
+c.section("Toss and bowling type v batting hand")
+st.markdown(f"""
+- **Teams > Toss** (Cricsheet, every season): tosses won, how often the toss winner chose to field, and win %
+  after winning or losing the toss and batting first or chasing. Win % counts only matches with a winner (a tie
+  is settled by a super over, which is not in the data, so it has no winner here). Batting first follows the
+  toss winner's choice. Rows under {c.SMALL_MATCHES} matches are marked as small samples.
+- **Matchups > Left and right, bowling type v batting hand:** strike rate, average, dot % or boundary % of
+  right- and left-hand batters against each Dugout bowling type, from Cricsheet balls and the player profiles.
+  Blank under {c.MIN_BALLS} balls; {c.SMALL_MARK} under {c.SMALL_BALLS} balls.
+- **Team average age and the PSL age curve** are on Teams > Squad: ages in whole years on match day, never a
+  date of birth.
+""")
+
+c.section("Partnerships, discipline, fielding, entry and dismissals")
+st.markdown(f"""
+All from Cricsheet balls, innings 1 and 2 only. A wicket is any dismissal except retired hurt and retired not
+out (run outs and retired out count).
+- **Teams > Partnerships:** the stand for each wicket runs from the fall of one wicket to the next: team runs,
+  extras included, and balls faced (wides not counted). The last stand of an innings is unbroken unless ten
+  wickets fell. Average: runs per stand that ended. **Collapse:** {c.COLLAPSE_WKTS} wickets for {c.COLLAPSE_RUNS}
+  runs or fewer, counted from the score at the wicket before (80/2 to 100/5 is 3 for 20). The collapse index is
+  the share of innings batted with at least one collapse; collapses caused, the share of opponents' innings.
+  Rates are blank under {c.MIN_INNS} innings or stands and marked small under {c.SMALL_INNS}.
+- **Teams > Discipline:** extras given away when bowling: wides and no-balls (balls and runs), byes, leg byes
+  and penalty runs. The no-ball run follows the counting rules: a no-ball with byes or leg byes is 1 run, the
+  rest are byes or leg byes. Per match: per innings bowled in the chosen seasons.
+- **Teams > Fielding:** catches (wicketkeepers included; caught and bowled to the bowler), run outs (every fielder
+  named in a run out is credited) and stumpings, for one franchise and as PSL leaders. Fielders are named in
+  the data by name and matched to the player by that match's squad, so merged records count once.
+  Wicketkeeper and substitute catches are not told apart.
+- **Player > Phases, When he comes in:** the score, wickets and overs when he first came to the crease (before
+  his first ball at either end), and his runs, balls, strike rate and average by wickets down and by phase. His
+  usual position is the band of batting positions he batted in most often (Opener 1 or 2, Number 3, Numbers 4
+  and 5, 6 and 7, 8 to 11), or Mixed when no band has half his innings.
+- **Player > Phases, How he gets out:** each type's share of his dismissals (at either end) against all PSL
+  dismissals in the same seasons; at least {c.MIN_INNS} dismissals, small under {c.SMALL_INNS}.
+""")
 
 c.section("Credit")
-st.markdown("Data: Cricsheet.org (ball by ball for PSL and for the men's T20 baseline). Styles: Wikipedia, DBpedia, "
-            "Wikidata and developer verified. Analysis by Hammad. "
+st.markdown("Data: Cricsheet.org (ball by ball for PSL and for the men's T20 baseline). Player profiles: see "
+            "Data sources above. Analysis by Hammad. "
             "No team logos or player photos are used.")
+st.markdown(c.IDEA_CREDIT)
 
 with st.expander(f"Matches without WPA ({len(missing)})"):
     mm = c.matches().set_index("match_id")
